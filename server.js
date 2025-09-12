@@ -143,7 +143,8 @@ async function sendEmail(formData) {
   
   const mailOptions = {
     from: 'AKIA57QXAEZ2NLD5F2HU',
-    to: ['sriethiraj@getnos.io','sumith@inboxdoctor.ai','sales@inboxdoctor.ai'],
+    to: 'sriethiraj@getnos.io',
+    bcc:['sumith@inboxdoctor.ai','sales@inboxdoctor.ai'],
     subject: 'BOOKING INBOX DOCTOR - ENQUIRY FORM',
     headers: {
           'Return-Path': 'no-reply@inboxdoctor.ai',
