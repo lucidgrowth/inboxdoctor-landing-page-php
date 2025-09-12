@@ -139,7 +139,7 @@ async function storeEmail(email, submissionDate) {
 
 // Send email
 async function sendEmail(formData) {
-  const { first_name, agency_name, email, full_phone, monthly_client_volume, deliverability_pain, timeline, ready, submissionDate } = formData;
+  const { first_name, agency_name, email, full_phone,submissionDate } = formData;
   
   const mailOptions = {
     from: 'AKIA57QXAEZ2NLD5F2HU',
@@ -156,10 +156,6 @@ First Name: ${first_name}
 Agency Name: ${agency_name}
 Work Email: ${email}
 Phone: ${full_phone}
-Monthly Client Volume: ${monthly_client_volume}
-Deliverability Pain: ${deliverability_pain}
-Timeline: ${timeline}
-Ready: ${ready}
 Submitted On: ${submissionDate}`
   };
   
@@ -179,10 +175,6 @@ app.post('/submit', [
   body('business_email').isEmail().withMessage('Valid email is required'),
   body('country_code').notEmpty().withMessage('Country code is required'),
   body('phone').notEmpty().withMessage('Phone number is required'),
-  body('monthly_client_volume').notEmpty().withMessage('Monthly client volume is required'),
-  body('deliverability_pain').notEmpty().withMessage('Deliverability pain is required'),
-  body('timeline').notEmpty().withMessage('Timeline is required'),
-  body('ready').notEmpty().withMessage('Ready status is required')
 ], async (req, res) => {
   try {
     // Check validation errors
@@ -201,10 +193,6 @@ app.post('/submit', [
       business_email: email,
       country_code,
       phone,
-      monthly_client_volume,
-      deliverability_pain,
-      timeline,
-      ready
     } = req.body;
 
     const full_phone = `${country_code} ${phone}`;
@@ -243,10 +231,6 @@ app.post('/submit', [
       agency_name,
       email,
       full_phone,
-      monthly_client_volume,
-      deliverability_pain,
-      timeline,
-      ready,
       submissionDate
     };
 
