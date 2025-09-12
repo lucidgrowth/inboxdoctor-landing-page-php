@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const redis = require('redis');
+const Redis = require('ioredis');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
 const path = require('path');
@@ -16,10 +16,15 @@ app.use(cors());
 app.use(express.static('public'));
 
 // Redis client setup
-const redisClient = redis.createClient({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD || undefined
+const redisClient = new Redis({
+  host: process.env.REDIS_HOST,
+  port: Number.isNaN(parseInt(process.env.REDIS_PORT))
+    ? 6379
+    : parseInt(process.env.REDIS_PORT),
+  password: process.env.REDIS_PASSWORD,
+  connectTimeout: 60 * 1000 * 5,
+  maxRetriesPerRequest: null,
+  tls: { rejectUnauthorized: false },
 });
 
 redisClient.on('error', (err) => {
@@ -29,9 +34,6 @@ redisClient.on('error', (err) => {
 redisClient.on('connect', () => {
   console.log('Connected to Redis');
 });
-
-// Connect to Redis
-redisClient.connect().catch(console.error);
 
 // Email transporter setup
 const transporter = nodemailer.createTransport({
@@ -124,7 +126,7 @@ async function checkDuplicateEmail(email) {
 async function storeEmail(email, submissionDate) {
   try {
     await redisClient.set(`email:${email}`, submissionDate);
-    await redisClient.sAdd('submitted_emails', `${email} | ${submissionDate}`);
+    await redisClient.sadd('submitted_emails', `${email} | ${submissionDate}`);
   } catch (error) {
     console.error('Error storing email:', error);
     throw error;
@@ -137,7 +139,7 @@ async function sendEmail(formData) {
   
   const mailOptions = {
     from: 'AKIA57QXAEZ2NLD5F2HU',
-    to: email,
+    to: ['sriethiraj@getnos.io','sumith@inboxdoctor.ai','sales@inboxdoctor.ai'],
     subject: 'BOOKING INBOX DOCTOR - ENQUIRY FORM',
     headers: {
           'Return-Path': 'no-reply@inboxdoctor.ai',
@@ -164,11 +166,6 @@ Submitted On: ${submissionDate}`
     return false;
   }
 }
-
-// Routes
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
 // Form submission route
 app.post('/submit', [
@@ -278,7 +275,7 @@ app.post('/submit', [
 // Get submitted emails (for admin purposes)
 app.get('/admin/emails', async (req, res) => {
   try {
-    const emails = await redisClient.sMembers('submitted_emails');
+    const emails = await redisClient.smembers('submitted_emails');
     res.json({ emails });
   } catch (error) {
     console.error('Error fetching emails:', error);
@@ -295,6 +292,6 @@ app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down gracefully...');
-  await redisClient.quit();
+  await redisClient.disconnect();
   process.exit(0);
 });
