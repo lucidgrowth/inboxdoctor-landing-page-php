@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inbox Doctor - Contact Form</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .form-container {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+
+        .form-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .form-header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .form-header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .phone-group {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 10px;
+        }
+
+        .submit-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s ease;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .success-message {
+            color: #27ae60;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .phone-group {
+                grid-template-columns: 1fr;
+            }
+            
+            .form-container {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <div class="form-header">
+            <h1>Inbox Doctor</h1>
+            <p>Book your consultation and improve your email deliverability</p>
+        </div>
+
+        <form id="contactForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="first_name">First Name *</label>
+                    <input type="text" id="first_name" name="first_name" required>
+                    <div class="error-message" id="first_name_error"></div>
+                </div>
+                <div class="form-group">
+                    <label for="agency_name">Agency Name *</label>
+                    <input type="text" id="agency_name" name="agency_name" required>
+                    <div class="error-message" id="agency_name_error"></div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="business_email">Work Email *</label>
+                <input type="email" id="business_email" name="business_email" required>
+                <div class="error-message" id="business_email_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="phone">Phone Number *</label>
+                <div class="phone-group">
+                    <select id="country_code" name="country_code" required>
+                        <option value="">Code</option>
+                        <option value="+1">+1 (US)</option>
+                        <option value="+44">+44 (UK)</option>
+                        <option value="+91">+91 (India)</option>
+                        <option value="+61">+61 (Australia)</option>
+                        <option value="+49">+49 (Germany)</option>
+                        <option value="+33">+33 (France)</option>
+                        <option value="+81">+81 (Japan)</option>
+                        <option value="+86">+86 (China)</option>
+                        <option value="+55">+55 (Brazil)</option>
+                        <option value="+7">+7 (Russia)</option>
+                    </select>
+                    <input type="tel" id="phone" name="phone" placeholder="Phone number" required>
+                </div>
+                <div class="error-message" id="phone_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="monthly_client_volume">Monthly Client Volume *</label>
+                <select id="monthly_client_volume" name="monthly_client_volume" required>
+                    <option value="">Select volume</option>
+                    <option value="1-100">1-100 clients</option>
+                    <option value="101-500">101-500 clients</option>
+                    <option value="501-1000">501-1000 clients</option>
+                    <option value="1001-5000">1001-5000 clients</option>
+                    <option value="5000+">5000+ clients</option>
+                </select>
+                <div class="error-message" id="monthly_client_volume_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="deliverability_pain">What's your biggest deliverability pain? *</label>
+                <textarea id="deliverability_pain" name="deliverability_pain" placeholder="Describe your email deliverability challenges..." required></textarea>
+                <div class="error-message" id="deliverability_pain_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="timeline">When do you need this resolved? *</label>
+                <select id="timeline" name="timeline" required>
+                    <option value="">Select timeline</option>
+                    <option value="ASAP">ASAP</option>
+                    <option value="Within 1 week">Within 1 week</option>
+                    <option value="Within 1 month">Within 1 month</option>
+                    <option value="Within 3 months">Within 3 months</option>
+                    <option value="Just exploring">Just exploring</option>
+                </select>
+                <div class="error-message" id="timeline_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="ready">Are you ready to invest in improving your deliverability? *</label>
+                <select id="ready" name="ready" required>
+                    <option value="">Select option</option>
+                    <option value="Yes, ready to invest">Yes, ready to invest</option>
+                    <option value="Need more information">Need more information</option>
+                    <option value="Budget planning">Budget planning</option>
+                    <option value="Not sure yet">Not sure yet</option>
+                </select>
+                <div class="error-message" id="ready_error"></div>
+            </div>
+
+            <button type="submit" class="submit-btn" id="submitBtn">
+                Book Your Consultation
+            </button>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Processing your request...</p>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('contactForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const errorMessages = document.querySelectorAll('.error-message');
+            
+            // Clear previous errors
+            errorMessages.forEach(error => {
+                error.style.display = 'none';
+                error.textContent = '';
+            });
+            
+            // Show loading state
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            
+            try {
+                const formData = new FormData(this);
+                const data = Object.fromEntries(formData);
+                
+                const response = await fetch('/submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Redirect to Calendly
+                    window.location.href = result.redirectUrl;
+                } else {
+                    // Show error message
+                    if (result.message) {
+                        alert(result.message);
+                    }
+                    
+                    // Show field-specific errors
+                    if (result.errors) {
+                        result.errors.forEach(error => {
+                            const errorElement = document.getElementById(error.param + '_error');
+                            if (errorElement) {
+                                errorElement.textContent = error.msg;
+                                errorElement.style.display = 'block';
+                            }
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('An error occurred. Please try again.');
+            } finally {
+                // Hide loading state
+                submitBtn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
