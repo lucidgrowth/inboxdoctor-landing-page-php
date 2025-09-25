@@ -252,15 +252,15 @@ function getISTTimestamp() {
 // Function to get lead score cluster based on score
 function getLeadScoreCluster(score) {
   if (score >= 0 && score <= 20) {
-    return "Cold Leads ❄️";
+    return "0–20 → Cold Leads ❄️";
   } else if (score >= 21 && score <= 40) {
-    return "Low-Intent Leads 🌙";
+    return "21–40 → Low-Intent Leads 🌙";
   } else if (score >= 41 && score <= 60) {
-    return "Warm Leads 🔥";
+    return "41–60 → Warm Leads 🔥";
   } else if (score >= 61 && score <= 80) {
-    return "Qualified Leads 🚀";
+    return "61–80 → Qualified Leads 🚀";
   } else if (score >= 81 && score <= 100) {
-    return "Hot Leads 🔥🔥";
+    return "81–100 → Hot Leads 🔥🔥";
   } else {
     return "Unknown Score";
   }
@@ -698,7 +698,12 @@ app.post('/submit', [
     } = req.body;
 
     const full_phone = `${country_code} ${phone}`;
-    const submissionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    // Format date as DD/MM/YYYY
+    const now = new Date();
+    const day = now.getDate().toString().padStart(2, '0');
+    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const year = now.getFullYear();
+    const submissionDate = `${day}/${month}/${year}`; // DD/MM/YYYY format
     const istTimestamp = getISTTimestamp();
     const country = getCountryFromExtension(country_code);
     
@@ -865,11 +870,11 @@ app.post('/admin/setup-dropdown', async (req, res) => {
               condition: {
                 type: 'ONE_OF_LIST',
                 values: [
-                  { userEnteredValue: 'Cold Leads ❄️' },
-                  { userEnteredValue: 'Low-Intent Leads 🌙' },
-                  { userEnteredValue: 'Warm Leads 🔥' },
-                  { userEnteredValue: 'Qualified Leads 🚀' },
-                  { userEnteredValue: 'Hot Leads 🔥🔥' }
+                  { userEnteredValue: '0–20 → Cold Leads ❄️' },
+                  { userEnteredValue: '21–40 → Low-Intent Leads 🌙' },
+                  { userEnteredValue: '41–60 → Warm Leads 🔥' },
+                  { userEnteredValue: '61–80 → Qualified Leads 🚀' },
+                  { userEnteredValue: '81–100 → Hot Leads 🔥🔥' }
                 ]
               },
               showCustomUi: true,
