@@ -76,7 +76,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
-const RANGE = 'A:F'; // A: Name, B: Agency, C: Email, D: Phone, E: Score, F: Date
+const RANGE = 'A:H'; // A: Name, B: Agency, C: Email, D: Phone, E: Score, F: Date, G: Time (IST), H: Country
 
 // Initialize Google Sheets API
 let sheets;
@@ -153,6 +153,37 @@ const PROFESSIONAL_PATTERNS = [
   /^[A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+$/, // First M. Last
   /^[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+$/ // First Middle Last
 ];
+
+// Country mapping based on phone extensions
+const COUNTRY_EXTENSIONS = {
+  '+91': 'India',
+  '+1': 'USA',
+  '+44': 'UK',
+  '+61': 'Australia',
+  '+971': 'UAE',
+  '+65': 'Singapore',
+  '+63': 'Philippines'
+};
+
+// Function to get country name from phone extension
+function getCountryFromExtension(countryCode) {
+  return COUNTRY_EXTENSIONS[countryCode] || 'Unknown';
+}
+
+// Function to get IST timestamp in 12-hour format
+function getISTTimestamp() {
+  const now = new Date();
+  const istTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+  
+  const hours = istTime.getHours();
+  const minutes = istTime.getMinutes();
+  const seconds = istTime.getSeconds();
+  
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  
+  return `${displayHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} ${ampm}`;
+}
 
 // Validation functions
 function validateEmail(email) {
@@ -349,12 +380,12 @@ async function ensureHeaderRow() {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date']
+        ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country']
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'A1:F1',
+        range: 'A1:H1',
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
@@ -386,7 +417,9 @@ async function appendLeadToSheet(leadData) {
         leadData.email,
         leadData.full_phone,
         leadData.score,
-        leadData.submissionDate
+        leadData.submissionDate,
+        leadData.istTimestamp,
+        leadData.country
       ]
     ];
 
@@ -468,7 +501,7 @@ async function sortLeadsByScore() {
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date'];
+    const headerRow = leads[0] || ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -528,8 +561,9 @@ First Name: ${first_name}
 Agency Name: ${agency_name}
 Work Email: ${email}
 Phone: ${full_phone}
+Country: ${formData.country}
 Lead Score: ${formData.score}/100
-Submitted On: ${submissionDate}`
+Submitted On: ${submissionDate} at ${formData.istTimestamp} IST`
   };
   
   try {
@@ -570,6 +604,8 @@ app.post('/submit', [
 
     const full_phone = `${country_code} ${phone}`;
     const submissionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const istTimestamp = getISTTimestamp();
+    const country = getCountryFromExtension(country_code);
 
     // Validate email
     const emailValidation = validateEmail(email);
@@ -614,6 +650,8 @@ app.post('/submit', [
       email,
       full_phone,
       submissionDate,
+      istTimestamp,
+      country,
       score: leadScore
     };
 
