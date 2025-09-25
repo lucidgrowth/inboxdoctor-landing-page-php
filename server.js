@@ -316,6 +316,10 @@ function validatePhone(phone) {
   return { valid: true };
 }
 
+// ValidEmail.net API configuration
+const VALID_EMAIL_API_URL = 'https://api.ValidEmail.net/';
+const VALID_EMAIL_TOKEN = '790e18d5ec364d28b343e70fc8ae17e3';
+
 // Twilio validation functions
 async function validateEmailWithTwilio(email) {
   try {
@@ -329,55 +333,118 @@ async function validateEmailWithTwilio(email) {
       };
     }
     
-    // Check for disposable email domains
-    const domain = email.split('@')[1].toLowerCase();
-    const disposableDomains = [
-      '10minutemail.com', 'tempmail.com', 'guerrillamail.com', 
-      'mailinator.com', 'throwaway.email', 'temp-mail.org',
-      'tempmail.net', 'guerrillamail.net', 'sharklasers.com',
-      'grr.la', 'guerrillamail.biz', 'guerrillamail.de',
-      'guerrillamail.info', 'guerrillamail.org', 'guerrillamailblock.com',
-      'yopmail.com', 'yopmail.net', 'yopmail.org', 'yopmail.fr',
-      'tempail.com', 'tempmail2.com', 'tempmaildemo.com'
-    ];
-    
-    if (disposableDomains.includes(domain)) {
-      return { 
-        valid: false, 
-        message: 'Temporary email addresses are not allowed. Please use a valid work email.' 
-      };
-    }
-    
-    // Use DNS lookup to validate email domain has MX records
+    // Use ValidEmail.net API for comprehensive email validation
     try {
-      const dns = require('dns').promises;
-      const emailDomain = email.split('@')[1];
+      const response = await fetch(`${VALID_EMAIL_API_URL}?email=${encodeURIComponent(email)}&token=${VALID_EMAIL_TOKEN}`);
       
-      // Check MX records for the domain
-      const mxRecords = await dns.resolveMx(emailDomain);
+      if (!response.ok) {
+        throw new Error(`ValidEmail API error: ${response.status}`);
+      }
       
-      if (mxRecords && mxRecords.length > 0) {
-        // Domain has valid MX records, email is likely valid
+      const emailData = await response.json();
+      
+      console.log('ValidEmail API response:', emailData);
+      
+      // Check if email is valid and deliverable
+      if (emailData.IsValid && emailData.State === 'Deliverable') {
         return { 
           valid: true, 
           message: 'Email validated successfully',
-          domain: emailDomain,
-          mxRecords: mxRecords.length,
-          validationMethod: 'DNS_MX_LOOKUP'
+          domain: emailData.Domain,
+          score: emailData.Score,
+          state: emailData.State,
+          reason: emailData.Reason,
+          free: emailData.Free,
+          role: emailData.Role,
+          disposable: emailData.Disposable,
+          acceptAll: emailData.AcceptAll,
+          mxRecord: emailData.MXRecord,
+          validationMethod: 'VALIDEMAIL_API'
         };
       } else {
+        // Email is not valid or not deliverable
+        let errorMessage = 'Invalid email address. Please enter a valid work email.';
+        
+        if (emailData.Reason) {
+          switch (emailData.Reason) {
+            case 'INVALID MAIL':
+              errorMessage = 'Invalid email address. Please enter a valid work email.';
+              break;
+            case 'DISPOSABLE EMAIL':
+              errorMessage = 'Temporary email addresses are not allowed. Please use a valid work email.';
+              break;
+            case 'ROLE EMAIL':
+              errorMessage = 'Role-based email addresses (like admin@, info@) are not allowed. Please use a personal work email.';
+              break;
+            case 'FREE EMAIL':
+              errorMessage = 'Free email providers are not allowed. Please use a work email address.';
+              break;
+            default:
+              errorMessage = `Email validation failed: ${emailData.Reason}. Please enter a valid work email.`;
+          }
+        }
+        
+        return { 
+          valid: false, 
+          message: errorMessage,
+          domain: emailData.Domain,
+          score: emailData.Score,
+          state: emailData.State,
+          reason: emailData.Reason,
+          free: emailData.Free,
+          role: emailData.Role,
+          disposable: emailData.Disposable,
+          validationMethod: 'VALIDEMAIL_API'
+        };
+      }
+    } catch (apiError) {
+      console.error('ValidEmail API error:', apiError);
+      
+      // Fallback to basic validation if API fails
+      const domain = email.split('@')[1].toLowerCase();
+      const disposableDomains = [
+        '10minutemail.com', 'tempmail.com', 'guerrillamail.com', 
+        'mailinator.com', 'throwaway.email', 'temp-mail.org',
+        'tempmail.net', 'guerrillamail.net', 'sharklasers.com',
+        'grr.la', 'guerrillamail.biz', 'guerrillamail.de',
+        'guerrillamail.info', 'guerrillamail.org', 'guerrillamailblock.com',
+        'yopmail.com', 'yopmail.net', 'yopmail.org', 'yopmail.fr',
+        'tempail.com', 'tempmail2.com', 'tempmaildemo.com'
+      ];
+      
+      if (disposableDomains.includes(domain)) {
+        return { 
+          valid: false, 
+          message: 'Temporary email addresses are not allowed. Please use a valid work email.' 
+        };
+      }
+      
+      // Basic DNS validation as fallback
+      try {
+        const dns = require('dns').promises;
+        const emailDomain = email.split('@')[1];
+        const mxRecords = await dns.resolveMx(emailDomain);
+        
+        if (mxRecords && mxRecords.length > 0) {
+          return { 
+            valid: true, 
+            message: 'Email validated successfully (fallback method)',
+            domain: emailDomain,
+            mxRecords: mxRecords.length,
+            validationMethod: 'DNS_MX_LOOKUP_FALLBACK'
+          };
+        } else {
+          return { 
+            valid: false, 
+            message: 'Invalid email domain. Please enter a valid work email.' 
+          };
+        }
+      } catch (dnsError) {
         return { 
           valid: false, 
           message: 'Invalid email domain. Please enter a valid work email.' 
         };
       }
-    } catch (dnsError) {
-      // If DNS lookup fails, the domain might not exist
-      console.error('DNS lookup error for email domain:', dnsError);
-      return { 
-        valid: false, 
-        message: 'Invalid email domain. Please enter a valid work email.' 
-      };
     }
     
   } catch (error) {
@@ -839,7 +906,6 @@ Work Email: ${email}
 Email Verified: ${formData.emailVerified}
 Email Domain: ${formData.emailDomain}
 Email Validation Method: ${formData.emailValidationMethod}
-MX Records: ${formData.mxRecordsCount}
 Phone: ${full_phone}
 Phone Verified: ${formData.phoneVerified}
 Country: ${formData.country}
@@ -984,7 +1050,6 @@ app.post('/submit', [
       leadType,
       emailDomain: emailValidation.domain || email.split('@')[1],
       emailValidationMethod: emailValidation.validationMethod || 'BASIC',
-      mxRecordsCount: emailValidation.mxRecords || 0,
       emailVerified: emailValidation.valid ? 'Yes' : 'No',
       phoneVerified: phoneValidation.valid ? 'Yes' : 'No'
     };
