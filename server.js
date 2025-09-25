@@ -82,9 +82,22 @@ const RANGE = 'A:F'; // A: Name, B: Agency, C: Email, D: Phone, E: Score, F: Dat
 let sheets;
 async function initializeGoogleSheets() {
   try {
+    // Handle private key formatting for different environments
+    let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+    
+    if (privateKey) {
+      // Replace escaped newlines with actual newlines
+      privateKey = privateKey.replace(/\\n/g, '\n');
+      
+      // Ensure the key has proper BEGIN/END markers
+      if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+        privateKey = `-----BEGIN PRIVATE KEY-----\n${privateKey}\n-----END PRIVATE KEY-----`;
+      }
+    }
+
     const auth = new JWT({
       email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      key: privateKey,
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
@@ -92,6 +105,7 @@ async function initializeGoogleSheets() {
     console.log('Google Sheets API initialized');
   } catch (error) {
     console.error('Error initializing Google Sheets:', error);
+    console.error('Please check your GOOGLE_PRIVATE_KEY environment variable');
   }
 }
 
@@ -390,6 +404,13 @@ async function appendLeadToSheet(leadData) {
     return true;
   } catch (error) {
     console.error('Error adding lead to Google Sheets:', error);
+    
+    // Check if it's an authentication error
+    if (error.message && error.message.includes('DECODER routines')) {
+      console.error('Authentication error: Please check your GOOGLE_PRIVATE_KEY format');
+      console.error('The private key should be properly formatted with newlines');
+    }
+    
     return false;
   }
 }
