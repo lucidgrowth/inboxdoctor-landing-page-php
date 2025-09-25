@@ -83,7 +83,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
-const RANGE = 'A:R'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type, P: Phone Carrier, Q: Email Validated, R: Phone Validated
+const RANGE = 'A:Q'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type, P: Email Verified, Q: Phone Verified
 
 // Initialize Google Sheets API
 let sheets;
@@ -637,7 +637,7 @@ async function ensureHeaderRow() {
     // Check if sheet has any data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'A1:R1',
+      range: 'A1:Q1',
     });
 
     const existingData = response.data.values;
@@ -645,12 +645,12 @@ async function ensureHeaderRow() {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Phone Carrier', 'Email Validated', 'Phone Validated']
+        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified']
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'A1:R1',
+        range: 'A1:Q1',
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
@@ -692,9 +692,8 @@ async function appendLeadToSheet(leadData) {
         leadData.ipAddress, // IP Address
         leadData.osBrowser, // OS & Browser
         leadData.leadType, // Lead Type
-        leadData.phoneCarrier, // Phone Carrier
-        leadData.emailValidated ? 'Yes' : 'No', // Email Validated
-        leadData.phoneValidated ? 'Yes' : 'No' // Phone Validated
+        leadData.emailVerified, // Email Verified
+        leadData.phoneVerified // Phone Verified
       ]
     ];
 
@@ -776,7 +775,7 @@ async function sortLeadsByScore() {
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Phone Carrier', 'Email Validated', 'Phone Validated'];
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -836,12 +835,13 @@ Serial Number: ${formData.serialNumber}
 Lead ID: ${formData.leadId}
 First Name: ${first_name}
 Agency Name: ${agency_name}
-Work Email: ${email} (Validated: ${formData.emailValidated ? 'Yes' : 'No'})
+Work Email: ${email}
+Email Verified: ${formData.emailVerified}
 Email Domain: ${formData.emailDomain}
 Email Validation Method: ${formData.emailValidationMethod}
 MX Records: ${formData.mxRecordsCount}
-Phone: ${full_phone} (Validated: ${formData.phoneValidated ? 'Yes' : 'No'})
-Phone Carrier: ${formData.phoneCarrier}
+Phone: ${full_phone}
+Phone Verified: ${formData.phoneVerified}
 Country: ${formData.country}
 Lead Score: ${formData.score}/100
 Lead Score Cluster: ${formData.leadScoreCluster}
@@ -982,12 +982,11 @@ app.post('/submit', [
       ipAddress: clientInfo.ip,
       osBrowser,
       leadType,
-      phoneCarrier: phoneValidation.carrier || 'Unknown',
-      emailValidated: emailValidation.valid,
-      phoneValidated: phoneValidation.valid,
       emailDomain: emailValidation.domain || email.split('@')[1],
       emailValidationMethod: emailValidation.validationMethod || 'BASIC',
-      mxRecordsCount: emailValidation.mxRecords || 0
+      mxRecordsCount: emailValidation.mxRecords || 0,
+      emailVerified: emailValidation.valid ? 'Yes' : 'No',
+      phoneVerified: phoneValidation.valid ? 'Yes' : 'No'
     };
 
     // Send email
