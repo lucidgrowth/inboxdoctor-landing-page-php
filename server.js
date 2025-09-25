@@ -76,7 +76,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
-const RANGE = 'A:H'; // A: Name, B: Agency, C: Email, D: Phone, E: Score, F: Date, G: Time (IST), H: Country
+const RANGE = 'A:J'; // A: Name, B: Agency, C: Email, D: Phone, E: Score, F: Date, G: Time (IST), H: Country, I: Lead Score Cluster, J: Lead Source
 
 // Initialize Google Sheets API
 let sheets;
@@ -165,6 +165,9 @@ const COUNTRY_EXTENSIONS = {
   '+63': 'Philippines'
 };
 
+// Lead source constant
+const LEAD_SOURCE = 'https://offer.inboxdoctor.ai/';
+
 // Function to get country name from phone extension
 function getCountryFromExtension(countryCode) {
   return COUNTRY_EXTENSIONS[countryCode] || 'Unknown';
@@ -183,6 +186,23 @@ function getISTTimestamp() {
   const displayHours = hours % 12 || 12;
   
   return `${displayHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} ${ampm}`;
+}
+
+// Function to get lead score cluster based on score
+function getLeadScoreCluster(score) {
+  if (score >= 0 && score <= 20) {
+    return "Cold Leads ❄️";
+  } else if (score >= 21 && score <= 40) {
+    return "Low-Intent Leads 🌙";
+  } else if (score >= 41 && score <= 60) {
+    return "Warm Leads 🔥";
+  } else if (score >= 61 && score <= 80) {
+    return "Qualified Leads 🚀";
+  } else if (score >= 81 && score <= 100) {
+    return "Hot Leads 🔥🔥";
+  } else {
+    return "Unknown Score";
+  }
 }
 
 // Validation functions
@@ -380,12 +400,12 @@ async function ensureHeaderRow() {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country']
+        ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source']
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'A1:H1',
+        range: 'A1:J1',
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
@@ -419,7 +439,9 @@ async function appendLeadToSheet(leadData) {
         leadData.score,
         leadData.submissionDate,
         leadData.istTimestamp,
-        leadData.country
+        leadData.country,
+        leadData.leadScoreCluster,
+        leadData.leadSource
       ]
     ];
 
@@ -501,7 +523,7 @@ async function sortLeadsByScore() {
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country'];
+    const headerRow = leads[0] || ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -563,6 +585,8 @@ Work Email: ${email}
 Phone: ${full_phone}
 Country: ${formData.country}
 Lead Score: ${formData.score}/100
+Lead Score Cluster: ${formData.leadScoreCluster}
+Lead Source: ${formData.leadSource}
 Submitted On: ${submissionDate} at ${formData.istTimestamp} IST`
   };
   
@@ -643,6 +667,9 @@ app.post('/submit', [
       phone
     });
 
+    // Get lead score cluster
+    const leadScoreCluster = getLeadScoreCluster(leadScore);
+
     // Prepare form data with score
     const formData = {
       first_name,
@@ -652,7 +679,9 @@ app.post('/submit', [
       submissionDate,
       istTimestamp,
       country,
-      score: leadScore
+      score: leadScore,
+      leadScoreCluster,
+      leadSource: LEAD_SOURCE
     };
 
     // Send email
