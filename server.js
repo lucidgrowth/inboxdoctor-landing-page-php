@@ -76,7 +76,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
-const RANGE = 'A:J'; // A: Name, B: Agency, C: Email, D: Phone, E: Score, F: Date, G: Time (IST), H: Country, I: Lead Score Cluster, J: Lead Source
+const RANGE = 'A:O'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type
 
 // Initialize Google Sheets API
 let sheets;
@@ -167,6 +167,67 @@ const COUNTRY_EXTENSIONS = {
 
 // Lead source constant
 const LEAD_SOURCE = 'https://offer.inboxdoctor.ai/';
+
+// Lead ID counter (in production, this should be stored in Redis or database)
+let leadIdCounter = 1;
+
+// Function to generate unique Lead ID (Date/Month/Year format)
+function generateLeadId() {
+  const now = new Date();
+  const day = now.getDate().toString().padStart(2, '0');
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const year = now.getFullYear().toString().slice(-2); // Last 2 digits of year
+  const sequence = leadIdCounter.toString().padStart(4, '0');
+  
+  leadIdCounter++;
+  return `${day}${month}${year}${sequence}`;
+}
+
+// Function to get client information from request
+function getClientInfo(req) {
+  const ip = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
+             (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
+             req.headers['x-forwarded-for']?.split(',')[0] || 'Unknown';
+  
+  const userAgent = req.headers['user-agent'] || 'Unknown';
+  
+  // Parse OS and Browser from User-Agent
+  let os = 'Unknown';
+  let browser = 'Unknown';
+  
+  if (userAgent.includes('Windows')) os = 'Windows';
+  else if (userAgent.includes('Mac')) os = 'macOS';
+  else if (userAgent.includes('Linux')) os = 'Linux';
+  else if (userAgent.includes('Android')) os = 'Android';
+  else if (userAgent.includes('iOS')) os = 'iOS';
+  
+  if (userAgent.includes('Chrome')) browser = 'Chrome';
+  else if (userAgent.includes('Firefox')) browser = 'Firefox';
+  else if (userAgent.includes('Safari')) browser = 'Safari';
+  else if (userAgent.includes('Edge')) browser = 'Edge';
+  else if (userAgent.includes('Opera')) browser = 'Opera';
+  
+  return {
+    ip: ip.replace(/^::ffff:/, ''), // Remove IPv6 prefix
+    os,
+    browser,
+    userAgent
+  };
+}
+
+// Function to check if lead is duplicate based on email and phone
+async function checkLeadDuplicate(email, phone) {
+  try {
+    // Check Redis for existing email or phone
+    const emailExists = await redisClient.exists(`email:${email}`);
+    const phoneExists = await redisClient.exists(`phone:${phone}`);
+    
+    return emailExists === 1 || phoneExists === 1;
+  } catch (error) {
+    console.error('Error checking lead duplicate:', error);
+    return false;
+  }
+}
 
 // Function to get country name from phone extension
 function getCountryFromExtension(countryCode) {
@@ -392,7 +453,7 @@ async function ensureHeaderRow() {
     // Check if sheet has any data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'A1:F1',
+      range: 'A1:O1',
     });
 
     const existingData = response.data.values;
@@ -400,12 +461,12 @@ async function ensureHeaderRow() {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source']
+        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type']
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'A1:J1',
+        range: 'A1:O1',
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
@@ -432,16 +493,21 @@ async function appendLeadToSheet(leadData) {
 
     const values = [
       [
-        leadData.first_name,
-        leadData.agency_name,
-        leadData.email,
-        leadData.full_phone,
-        leadData.score,
-        leadData.submissionDate,
-        leadData.istTimestamp,
-        leadData.country,
-        leadData.leadScoreCluster,
-        leadData.leadSource
+        leadData.serialNumber, // S/Num
+        leadData.leadId, // Lead ID
+        leadData.first_name, // Name
+        leadData.agency_name, // Agency
+        leadData.email, // Email
+        leadData.full_phone, // Phone
+        leadData.score, // Score
+        leadData.submissionDate, // Date
+        leadData.istTimestamp, // Time (IST)
+        leadData.country, // Country
+        leadData.leadScoreCluster, // Lead Score Cluster
+        leadData.leadSource, // Lead Source
+        leadData.ipAddress, // IP Address
+        leadData.osBrowser, // OS & Browser
+        leadData.leadType // Lead Type
       ]
     ];
 
@@ -523,7 +589,7 @@ async function sortLeadsByScore() {
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source'];
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -579,6 +645,8 @@ async function sendEmail(formData) {
         },
     text: `You have received a new form submission request:
 
+Serial Number: ${formData.serialNumber}
+Lead ID: ${formData.leadId}
 First Name: ${first_name}
 Agency Name: ${agency_name}
 Work Email: ${email}
@@ -587,6 +655,9 @@ Country: ${formData.country}
 Lead Score: ${formData.score}/100
 Lead Score Cluster: ${formData.leadScoreCluster}
 Lead Source: ${formData.leadSource}
+IP Address: ${formData.ipAddress}
+OS & Browser: ${formData.osBrowser}
+Lead Type: ${formData.leadType}
 Submitted On: ${submissionDate} at ${formData.istTimestamp} IST`
   };
   
@@ -630,6 +701,14 @@ app.post('/submit', [
     const submissionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     const istTimestamp = getISTTimestamp();
     const country = getCountryFromExtension(country_code);
+    
+    // Generate Lead ID and get client info
+    const leadId = generateLeadId();
+    const clientInfo = getClientInfo(req);
+    const osBrowser = `${clientInfo.os} - ${clientInfo.browser}`;
+    
+    // Get next serial number (in production, this should be stored in Redis)
+    const serialNumber = leadIdCounter;
 
     // Validate email
     const emailValidation = validateEmail(email);
@@ -649,12 +728,14 @@ app.post('/submit', [
       });
     }
 
-    // Check for duplicate email
-    const isDuplicate = await checkDuplicateEmail(email);
+    // Check for duplicate lead (email or phone)
+    const isDuplicate = await checkLeadDuplicate(email, phone);
+    const leadType = isDuplicate ? 'Duplicate' : 'New';
+    
     if (isDuplicate) {
       return res.status(400).json({
         success: false,
-        message: 'This email has already been submitted. Please use a different email ID.'
+        message: 'Lead already exists (duplicate email or phone). Please use different contact information.'
       });
     }
 
@@ -672,6 +753,8 @@ app.post('/submit', [
 
     // Prepare form data with score
     const formData = {
+      serialNumber,
+      leadId,
       first_name,
       agency_name,
       email,
@@ -681,7 +764,10 @@ app.post('/submit', [
       country,
       score: leadScore,
       leadScoreCluster,
-      leadSource: LEAD_SOURCE
+      leadSource: LEAD_SOURCE,
+      ipAddress: clientInfo.ip,
+      osBrowser,
+      leadType
     };
 
     // Send email
@@ -693,8 +779,9 @@ app.post('/submit', [
       });
     }
 
-    // Store email in Redis
+    // Store email and phone in Redis to prevent duplicates
     await storeEmail(email, submissionDate);
+    await redisClient.setex(`phone:${phone}`, 86400, 'submitted'); // 24 hours
 
     // Add lead to Google Sheets with score
     const sheetAdded = await appendLeadToSheet(formData);
@@ -752,6 +839,78 @@ app.post('/admin/sort-leads', async (req, res) => {
   } catch (error) {
     console.error('Error sorting leads:', error);
     res.status(500).json({ error: 'Failed to sort leads' });
+  }
+});
+
+// Admin endpoint to set up lead cluster dropdown
+app.post('/admin/setup-dropdown', async (req, res) => {
+  try {
+    if (!sheets) {
+      return res.status(500).json({ error: 'Google Sheets not initialized' });
+    }
+
+    // Set up data validation for Lead Score Cluster and Lead Type columns
+    const request = {
+      requests: [
+        {
+          setDataValidation: {
+            range: {
+              sheetId: 0, // First sheet
+              startRowIndex: 1, // Start from row 2 (skip header)
+              endRowIndex: 1000, // Apply to 1000 rows
+              startColumnIndex: 10, // Column K (Lead Score Cluster)
+              endColumnIndex: 11
+            },
+            rule: {
+              condition: {
+                type: 'ONE_OF_LIST',
+                values: [
+                  { userEnteredValue: 'Cold Leads ❄️' },
+                  { userEnteredValue: 'Low-Intent Leads 🌙' },
+                  { userEnteredValue: 'Warm Leads 🔥' },
+                  { userEnteredValue: 'Qualified Leads 🚀' },
+                  { userEnteredValue: 'Hot Leads 🔥🔥' }
+                ]
+              },
+              showCustomUi: true,
+              strict: false
+            }
+          }
+        },
+        {
+          setDataValidation: {
+            range: {
+              sheetId: 0, // First sheet
+              startRowIndex: 1, // Start from row 2 (skip header)
+              endRowIndex: 1000, // Apply to 1000 rows
+              startColumnIndex: 14, // Column O (Lead Type)
+              endColumnIndex: 15
+            },
+            rule: {
+              condition: {
+                type: 'ONE_OF_LIST',
+                values: [
+                  { userEnteredValue: 'New' },
+                  { userEnteredValue: 'Duplicate' }
+                ]
+              },
+              showCustomUi: true,
+              strict: false
+            }
+          }
+        }
+      ]
+    };
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      resource: request
+    });
+    
+    res.json({ success: true, message: 'Lead Score Cluster dropdown set up successfully' });
+  } catch (error) {
+    console.error('Error setting up dropdown:', error);
+    res.status(500).json({ error: 'Failed to set up dropdown' });
   }
 });
 
