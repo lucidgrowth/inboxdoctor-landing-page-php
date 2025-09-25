@@ -6,6 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const { google } = require('googleapis');
 const { JWT } = require('google-auth-library');
+const twilio = require('twilio');
 require('dotenv').config();
 
 const app = express();
@@ -40,6 +41,12 @@ redisClient.on('error', (err) => {
 redisClient.on('connect', () => {
   console.log('Connected to Redis');
 });
+
+// Twilio client setup
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
 // Email transporter setup
 const transporter = nodemailer.createTransport({
@@ -76,7 +83,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
-const RANGE = 'A:O'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type
+const RANGE = 'A:R'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type, P: Phone Carrier, Q: Email Validated, R: Phone Validated
 
 // Initialize Google Sheets API
 let sheets;
@@ -309,6 +316,183 @@ function validatePhone(phone) {
   return { valid: true };
 }
 
+// Twilio validation functions
+async function validateEmailWithTwilio(email) {
+  try {
+    // Basic email format validation first
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    
+    if (!emailRegex.test(email)) {
+      return { 
+        valid: false, 
+        message: 'Invalid email format. Please enter a valid email address.' 
+      };
+    }
+    
+    // Check for disposable email domains
+    const domain = email.split('@')[1].toLowerCase();
+    const disposableDomains = [
+      '10minutemail.com', 'tempmail.com', 'guerrillamail.com', 
+      'mailinator.com', 'throwaway.email', 'temp-mail.org',
+      'tempmail.net', 'guerrillamail.net', 'sharklasers.com',
+      'grr.la', 'guerrillamail.biz', 'guerrillamail.de',
+      'guerrillamail.info', 'guerrillamail.org', 'guerrillamailblock.com',
+      'yopmail.com', 'yopmail.net', 'yopmail.org', 'yopmail.fr',
+      'tempail.com', 'tempmail2.com', 'tempmaildemo.com'
+    ];
+    
+    if (disposableDomains.includes(domain)) {
+      return { 
+        valid: false, 
+        message: 'Temporary email addresses are not allowed. Please use a valid work email.' 
+      };
+    }
+    
+    // Use DNS lookup to validate email domain has MX records
+    try {
+      const dns = require('dns').promises;
+      const emailDomain = email.split('@')[1];
+      
+      // Check MX records for the domain
+      const mxRecords = await dns.resolveMx(emailDomain);
+      
+      if (mxRecords && mxRecords.length > 0) {
+        // Domain has valid MX records, email is likely valid
+        return { 
+          valid: true, 
+          message: 'Email validated successfully',
+          domain: emailDomain,
+          mxRecords: mxRecords.length,
+          validationMethod: 'DNS_MX_LOOKUP'
+        };
+      } else {
+        return { 
+          valid: false, 
+          message: 'Invalid email domain. Please enter a valid work email.' 
+        };
+      }
+    } catch (dnsError) {
+      // If DNS lookup fails, the domain might not exist
+      console.error('DNS lookup error for email domain:', dnsError);
+      return { 
+        valid: false, 
+        message: 'Invalid email domain. Please enter a valid work email.' 
+      };
+    }
+    
+  } catch (error) {
+    console.error('Email validation error:', error);
+    return { 
+      valid: false, 
+      message: 'Email validation service temporarily unavailable. Please try again later.' 
+    };
+  }
+}
+
+// Twilio Verify API for email verification (sends verification code)
+async function sendEmailVerificationCode(email) {
+  try {
+    // Create a verification service if it doesn't exist
+    const service = await twilioClient.verify.v2.services.create({
+      friendlyName: 'InboxDoctor Email Verification'
+    });
+    
+    // Send verification code to email
+    const verification = await twilioClient.verify.v2
+      .services(service.sid)
+      .verifications
+      .create({
+        to: email,
+        channel: 'email'
+      });
+
+    console.log('Email verification code sent to:', verification);
+    
+    return {
+      success: true,
+      serviceSid: service.sid,
+      verificationSid: verification.sid,
+      status: verification.status
+    };
+  } catch (error) {
+    console.error('Error sending email verification code:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Verify the email verification code
+async function verifyEmailCode(serviceSid, email, code) {
+  try {
+    const verificationCheck = await twilioClient.verify.v2
+      .services(serviceSid)
+      .verificationChecks
+      .create({
+        to: email,
+        code: code
+      });
+    
+    return {
+      success: verificationCheck.status === 'approved',
+      status: verificationCheck.status,
+      valid: verificationCheck.valid
+    };
+  } catch (error) {
+    console.error('Error verifying email code:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+async function validatePhoneWithTwilio(phoneNumber, countryCode) {
+  try {
+    // Format phone number with country code
+    const formattedPhone = countryCode + phoneNumber.replace(/\D/g, '');
+    
+    // Use Twilio Phone Number Lookup API
+    const lookup = await twilioClient.lookups.v1.phoneNumbers(formattedPhone).fetch({
+      type: ['carrier']
+    });
+
+    console.log('Twilio phone number lookup:', lookup);
+    
+    // Check if the phone number is valid and reachable
+    if (lookup.phoneNumber && lookup.carrier && lookup.carrier.type === 'mobile') {
+      return { 
+        valid: true, 
+        message: 'Phone number validated successfully',
+        carrier: lookup.carrier.name || 'Unknown',
+        countryCode: lookup.countryCode || countryCode,
+        nationalFormat: lookup.nationalFormat || formattedPhone
+      };
+    } else {
+      return { 
+        valid: false, 
+        message: 'Invalid phone number. Please enter a valid phone number.' 
+      };
+    }
+  } catch (error) {
+    // If Twilio lookup fails, it means the phone number is invalid
+    if (error.code === 20404) {
+      return { 
+        valid: false, 
+        message: 'Invalid phone number. Please enter a valid phone number.' 
+      };
+    }
+    
+    // For other errors, log and fall back to basic validation
+    console.error('Twilio phone validation error:', error);
+    return { 
+      valid: false, 
+      message: 'Phone validation service temporarily unavailable. Please try again later.' 
+    };
+  }
+}
+
 // Lead scoring functions
 function scoreCountry(countryCode) {
   const normalizedCode = countryCode?.toUpperCase().trim();
@@ -453,7 +637,7 @@ async function ensureHeaderRow() {
     // Check if sheet has any data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'A1:O1',
+      range: 'A1:R1',
     });
 
     const existingData = response.data.values;
@@ -461,12 +645,12 @@ async function ensureHeaderRow() {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type']
+        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Phone Carrier', 'Email Validated', 'Phone Validated']
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'A1:O1',
+        range: 'A1:R1',
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
@@ -507,7 +691,10 @@ async function appendLeadToSheet(leadData) {
         leadData.leadSource, // Lead Source
         leadData.ipAddress, // IP Address
         leadData.osBrowser, // OS & Browser
-        leadData.leadType // Lead Type
+        leadData.leadType, // Lead Type
+        leadData.phoneCarrier, // Phone Carrier
+        leadData.emailValidated ? 'Yes' : 'No', // Email Validated
+        leadData.phoneValidated ? 'Yes' : 'No' // Phone Validated
       ]
     ];
 
@@ -581,15 +768,15 @@ async function sortLeadsByScore() {
       return true;
     }
     
-    // Sort by score (column E, index 4) in descending order
+    // Sort by score (column G, index 6) in descending order
     const sortedLeads = dataRows.sort((a, b) => {
-      const scoreA = parseInt(a[4]) || 0;
-      const scoreB = parseInt(b[4]) || 0;
+      const scoreA = parseInt(a[6]) || 0;
+      const scoreB = parseInt(b[6]) || 0;
       return scoreB - scoreA;
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type'];
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Phone Carrier', 'Email Validated', 'Phone Validated'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -649,8 +836,12 @@ Serial Number: ${formData.serialNumber}
 Lead ID: ${formData.leadId}
 First Name: ${first_name}
 Agency Name: ${agency_name}
-Work Email: ${email}
-Phone: ${full_phone}
+Work Email: ${email} (Validated: ${formData.emailValidated ? 'Yes' : 'No'})
+Email Domain: ${formData.emailDomain}
+Email Validation Method: ${formData.emailValidationMethod}
+MX Records: ${formData.mxRecordsCount}
+Phone: ${full_phone} (Validated: ${formData.phoneValidated ? 'Yes' : 'No'})
+Phone Carrier: ${formData.phoneCarrier}
 Country: ${formData.country}
 Lead Score: ${formData.score}/100
 Lead Score Cluster: ${formData.leadScoreCluster}
@@ -715,8 +906,8 @@ app.post('/submit', [
     // Get next serial number (in production, this should be stored in Redis)
     const serialNumber = leadIdCounter;
 
-    // Validate email
-    const emailValidation = validateEmail(email);
+    // Validate email with Twilio (enhanced validation)
+    const emailValidation = await validateEmailWithTwilio(email);
     if (!emailValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -724,12 +915,30 @@ app.post('/submit', [
       });
     }
 
-    // Validate phone
-    const phoneValidation = validatePhone(phone);
+    // Additional basic email validation
+    const basicEmailValidation = validateEmail(email);
+    if (!basicEmailValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: basicEmailValidation.message
+      });
+    }
+
+    // Validate phone with Twilio
+    const phoneValidation = await validatePhoneWithTwilio(phone, country_code);
     if (!phoneValidation.valid) {
       return res.status(400).json({
         success: false,
         message: phoneValidation.message
+      });
+    }
+
+    // Additional basic phone validation
+    const basicPhoneValidation = validatePhone(phone);
+    if (!basicPhoneValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: basicPhoneValidation.message
       });
     }
 
@@ -756,23 +965,29 @@ app.post('/submit', [
     // Get lead score cluster
     const leadScoreCluster = getLeadScoreCluster(leadScore);
 
-    // Prepare form data with score
+    // Prepare form data with score and validation info
     const formData = {
       serialNumber,
       leadId,
       first_name,
       agency_name,
       email,
-      full_phone,
+      full_phone: phoneValidation.nationalFormat || full_phone, // Use Twilio formatted phone
       submissionDate,
       istTimestamp,
-      country,
+      country: phoneValidation.countryCode || country,
       score: leadScore,
       leadScoreCluster,
       leadSource: LEAD_SOURCE,
       ipAddress: clientInfo.ip,
       osBrowser,
-      leadType
+      leadType,
+      phoneCarrier: phoneValidation.carrier || 'Unknown',
+      emailValidated: emailValidation.valid,
+      phoneValidated: phoneValidation.valid,
+      emailDomain: emailValidation.domain || email.split('@')[1],
+      emailValidationMethod: emailValidation.validationMethod || 'BASIC',
+      mxRecordsCount: emailValidation.mxRecords || 0
     };
 
     // Send email
@@ -844,6 +1059,86 @@ app.post('/admin/sort-leads', async (req, res) => {
   } catch (error) {
     console.error('Error sorting leads:', error);
     res.status(500).json({ error: 'Failed to sort leads' });
+  }
+});
+
+// Email verification endpoints
+app.post('/verify-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+    
+    // First validate email format and domain
+    const emailValidation = await validateEmailWithTwilio(email);
+    if (!emailValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: emailValidation.message
+      });
+    }
+    
+    // Send verification code
+    const verificationResult = await sendEmailVerificationCode(email);
+    
+    if (verificationResult.success) {
+      res.json({
+        success: true,
+        message: 'Verification code sent to your email',
+        serviceSid: verificationResult.serviceSid
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send verification code. Please try again later.'
+      });
+    }
+  } catch (error) {
+    console.error('Error in email verification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error. Please try again later.'
+    });
+  }
+});
+
+app.post('/confirm-email', async (req, res) => {
+  try {
+    const { email, code, serviceSid } = req.body;
+    
+    if (!email || !code || !serviceSid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, code, and serviceSid are required'
+      });
+    }
+    
+    const verificationResult = await verifyEmailCode(serviceSid, email, code);
+    
+    if (verificationResult.success) {
+      res.json({
+        success: true,
+        message: 'Email verified successfully',
+        verified: true
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid verification code. Please try again.',
+        verified: false
+      });
+    }
+  } catch (error) {
+    console.error('Error in email confirmation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error. Please try again later.'
+    });
   }
 });
 
