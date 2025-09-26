@@ -85,8 +85,7 @@ const fakePhoneNumbers = [
 ];
 
 // Google Sheets configuration
-const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
-const SPREADSHEET_ID_2 = '1f5sO10G6hfc8a4ToqT_gQQFa_uO6_j60ljDXVFF7Wus';
+const SPREADSHEET_ID = '1iRr31-HifDlq_zymLxk3562KUusqos6T5QqvMqA8xUE';
 const RANGE = 'A:Q'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type, P: Email Verified, Q: Phone Verified
 
 // Initialize Google Sheets API
@@ -872,12 +871,11 @@ async function appendLeadToSheet(leadData) {
 
     console.log('Adding lead to Google Sheets:', values[0]);
 
-    // Ensure header row exists for both sheets
+    // Ensure header row exists
     await ensureHeaderRow(SPREADSHEET_ID);
-    await ensureHeaderRow(SPREADSHEET_ID_2);
 
-    // Append to first sheet
-    const response1 = await sheets.spreadsheets.values.append({
+    // Append to sheet
+    const response = await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: RANGE,
       valueInputOption: 'RAW',
@@ -885,18 +883,7 @@ async function appendLeadToSheet(leadData) {
       resource: { values }
     });
 
-    console.log('Lead added to first Google Sheet successfully');
-
-    // Append to second sheet
-    const response2 = await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID_2,
-      range: RANGE,
-      valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
-      resource: { values }
-    });
-
-    console.log('Lead added to second Google Sheet successfully');
+    console.log('Lead added to Google Sheet successfully');
     return true;
   } catch (error) {
     console.error('Error adding lead to Google Sheets:', error);
@@ -1192,15 +1179,14 @@ app.post('/submit', [
     // Add lead to Google Sheets with score
     const sheetAdded = await appendLeadToSheet(formData);
     if (sheetAdded) {
-      // Sort leads by score after adding new lead in both sheets
+      // Sort leads by score after adding new lead
       await sortLeadsByScore(SPREADSHEET_ID);
-      await sortLeadsByScore(SPREADSHEET_ID_2);
     }
 
     // Redirect to Calendly
     res.json({
       success: true,
-      redirectUrl: 'https://calendly.com/inboxdoctor-sales/inboxdoctor-product-demolp',
+      redirectUrl: 'https://calendly.com/inboxdoctor-sales/inboxdoctor-product-lpdemo-d2c-01',
       leadScore: leadScore
     });
 
@@ -1238,28 +1224,15 @@ app.get('/admin/leads', async (req, res) => {
   }
 });
 
-// Admin endpoint to get all leads from second sheet
-app.get('/admin/leads2', async (req, res) => {
-  try {
-    const leads = await getAllLeadsFromSheet(SPREADSHEET_ID_2);
-    res.json({ leads });
-  } catch (error) {
-    console.error('Error fetching leads from second sheet:', error);
-    res.status(500).json({ error: 'Failed to fetch leads from second sheet' });
-  }
-});
 
 // Admin endpoint to sort leads by score
 app.post('/admin/sort-leads', async (req, res) => {
   try {
-    const sorted1 = await sortLeadsByScore(SPREADSHEET_ID);
-    const sorted2 = await sortLeadsByScore(SPREADSHEET_ID_2);
-    const success = sorted1 && sorted2;
+    const sorted = await sortLeadsByScore(SPREADSHEET_ID);
     res.json({ 
-      success, 
-      message: success ? 'Leads sorted successfully in both sheets' : 'Failed to sort leads in one or both sheets',
-      sheet1: sorted1,
-      sheet2: sorted2
+      success: sorted, 
+      message: sorted ? 'Leads sorted successfully' : 'Failed to sort leads',
+      sheet: sorted
     });
   } catch (error) {
     console.error('Error sorting leads:', error);
@@ -1407,18 +1380,13 @@ app.post('/admin/setup-dropdown', async (req, res) => {
       ]
     };
 
-    // Set up dropdowns for both sheets
+    // Set up dropdowns for the sheet
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       resource: request
     });
-
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID_2,
-      resource: request
-    });
     
-    res.json({ success: true, message: 'Lead Score Cluster dropdown set up successfully in both sheets' });
+    res.json({ success: true, message: 'Lead Score Cluster dropdown set up successfully' });
   } catch (error) {
     console.error('Error setting up dropdown:', error);
     res.status(500).json({ error: 'Failed to set up dropdown' });
