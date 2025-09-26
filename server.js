@@ -1146,7 +1146,7 @@ app.post('/submit', [
       first_name,
       agency_name,
       email,
-      full_phone: phoneValidation.nationalFormat || full_phone, // Use Twilio formatted phone
+      full_phone: full_phone, // Use Twilio formatted phone
       submissionDate,
       istTimestamp,
       country: phoneValidation.countryCode || country,
