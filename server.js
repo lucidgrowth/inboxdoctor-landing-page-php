@@ -12,6 +12,9 @@ require('dotenv').config();
 const app = express();
 const PORT = 3000;
 
+// Trust proxy for accurate IP detection (important for production)
+app.set('trust proxy', true);
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -192,9 +195,113 @@ function generateLeadId() {
 
 // Function to get client information from request
 function getClientInfo(req) {
-  const ip = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
-             (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
-             req.headers['x-forwarded-for']?.split(',')[0] || 'Unknown';
+  // Extract IP address from various sources
+  let ip = 'Unknown';
+  let ipSource = 'Unknown';
+  
+  // Debug: Log all available IP information
+  console.log('=== IP DETECTION DEBUG ===');
+  console.log('req.ip:', req.ip);
+  console.log('req.connection?.remoteAddress:', req.connection?.remoteAddress);
+  console.log('req.socket?.remoteAddress:', req.socket?.remoteAddress);
+  console.log('req.headers:', JSON.stringify(req.headers, null, 2));
+  
+  // Method 1: Check X-Forwarded-For header (for proxies/load balancers)
+  if (req.headers['x-forwarded-for']) {
+    ip = req.headers['x-forwarded-for'].split(',')[0].trim();
+    ipSource = 'X-Forwarded-For';
+  }
+  // Method 2: Check X-Real-IP header
+  else if (req.headers['x-real-ip']) {
+    ip = req.headers['x-real-ip'];
+    ipSource = 'X-Real-IP';
+  }
+  // Method 3: Check X-Client-IP header
+  else if (req.headers['x-client-ip']) {
+    ip = req.headers['x-client-ip'];
+    ipSource = 'X-Client-IP';
+  }
+  // Method 4: Check CF-Connecting-IP header (Cloudflare)
+  else if (req.headers['cf-connecting-ip']) {
+    ip = req.headers['cf-connecting-ip'];
+    ipSource = 'CF-Connecting-IP';
+  }
+  // Method 5: Check Express req.ip (if trust proxy is set)
+  else if (req.ip) {
+    ip = req.ip;
+    ipSource = 'req.ip';
+  }
+  // Method 6: Check connection remote address
+  else if (req.connection && req.connection.remoteAddress) {
+    ip = req.connection.remoteAddress;
+    ipSource = 'connection.remoteAddress';
+  }
+  // Method 7: Check socket remote address
+  else if (req.socket && req.socket.remoteAddress) {
+    ip = req.socket.remoteAddress;
+    ipSource = 'socket.remoteAddress';
+  }
+  
+  // Clean up IPv6 mapped IPv4 addresses
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+  
+  // Clean up IPv6 localhost
+  if (ip === '::1') {
+    ip = '127.0.0.1';
+  }
+  
+  // Check for APIPA addresses (169.254.x.x) - these are invalid
+  if (ip.startsWith('169.254.')) {
+    console.log('WARNING: Detected APIPA address (169.254.x.x) - this indicates network configuration issues');
+    console.log('Trying alternative IP detection methods...');
+    
+    // Try to get IP from other sources
+    const alternativeIPs = [];
+    
+    // Check all possible headers
+    const ipHeaders = [
+      'x-forwarded-for', 'x-real-ip', 'x-client-ip', 'cf-connecting-ip',
+      'x-cluster-client-ip', 'forwarded-for', 'forwarded'
+    ];
+    
+    for (const header of ipHeaders) {
+      if (req.headers[header]) {
+        alternativeIPs.push(`${header}: ${req.headers[header]}`);
+      }
+    }
+    
+    console.log('Alternative IP sources found:', alternativeIPs);
+    
+    // If we have alternative sources, use the first valid one
+    if (alternativeIPs.length > 0) {
+      const firstAlternative = alternativeIPs[0].split(': ')[1];
+      if (firstAlternative && !firstAlternative.startsWith('169.254.')) {
+        ip = firstAlternative.split(',')[0].trim();
+        ipSource = 'Alternative Header';
+        console.log('Using alternative IP:', ip);
+      }
+    }
+    
+    // If still no valid IP, try to get it from User-Agent or other sources
+    if (ip.startsWith('169.254.')) {
+      console.log('Still getting APIPA address, this might be a server configuration issue');
+      console.log('Consider checking:');
+      console.log('1. Server network configuration');
+      console.log('2. Load balancer/proxy settings');
+      console.log('3. Docker/container networking');
+      console.log('4. Cloud provider networking settings');
+      
+      // For now, mark as unknown rather than using invalid APIPA
+      ip = 'Unknown (APIPA detected)';
+      ipSource = 'APIPA Fallback';
+    }
+  }
+  
+  console.log('Final IP:', ip);
+  console.log('IP Source:', ipSource);
+  console.log('=== END IP DEBUG ===');
   
   const userAgent = req.headers['user-agent'] || 'Unknown';
   
@@ -215,10 +322,11 @@ function getClientInfo(req) {
   else if (userAgent.includes('Opera')) browser = 'Opera';
   
   return {
-    ip: ip.replace(/^::ffff:/, ''), // Remove IPv6 prefix
+    ip: ip,
     os,
     browser,
-    userAgent
+    userAgent,
+    ipSource: ipSource
   };
 }
 
