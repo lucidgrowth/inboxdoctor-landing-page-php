@@ -85,7 +85,7 @@ const fakePhoneNumbers = [
 ];
 
 // Google Sheets configuration
-const SPREADSHEET_ID = '1iRr31-HifDlq_zymLxk3562KUusqos6T5QqvMqA8xUE';
+const SPREADSHEET_ID = '1AvfzH3UGwHfdcV_kuGv639CVaMaRaPH_anoke8NV7y0';
 const RANGE = 'A:Q'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type, P: Email Verified, Q: Phone Verified
 
 // Initialize Google Sheets API
@@ -176,7 +176,7 @@ const COUNTRY_EXTENSIONS = {
 };
 
 // Lead source constant
-const LEAD_SOURCE = 'https://offer.inboxdoctor.ai/';
+const LEAD_SOURCE = 'https://4f11854a009d.ngrok-free.app/';
 
 // Lead ID counter (in production, this should be stored in Redis or database)
 let leadIdCounter = 1;
@@ -1186,7 +1186,7 @@ app.post('/submit', [
     // Redirect to Calendly
     res.json({
       success: true,
-      redirectUrl: 'https://calendly.com/inboxdoctor-sales/inboxdoctor-product-lpdemo-d2c-01',
+      redirectUrl: 'https://calendly.com/inboxdoctor-sales/inboxdoctor-product-lpdemo-d2c-1',
       leadScore: leadScore
     });
 
