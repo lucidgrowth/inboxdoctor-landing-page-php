@@ -1036,6 +1036,94 @@ Submitted On: ${submissionDate} at ${formData.istTimestamp} IST`
   }
 }
 
+// Background processing function for lead data
+async function processLeadInBackground(data) {
+  try {
+    const {
+      first_name,
+      agency_name,
+      email,
+      country_code,
+      phone,
+      full_phone,
+      submissionDate,
+      istTimestamp,
+      country,
+      leadId,
+      serialNumber,
+      clientInfo,
+      osBrowser,
+      emailValidation,
+      phoneValidation
+    } = data;
+
+    // Calculate lead score in background
+    const leadScore = calculateLeadScore({
+      first_name,
+      agency_name,
+      business_email: email,
+      country_code,
+      phone
+    });
+
+    // Get lead score cluster
+    const leadScoreCluster = getLeadScoreCluster(leadScore);
+
+    // Prepare form data with score and validation info
+    const formData = {
+      serialNumber,
+      leadId,
+      first_name,
+      agency_name,
+      email,
+      full_phone: full_phone,
+      submissionDate,
+      istTimestamp,
+      country: phoneValidation.countryCode || country,
+      score: leadScore,
+      leadScoreCluster,
+      leadSource: LEAD_SOURCE,
+      ipAddress: clientInfo.ip,
+      osBrowser,
+      leadType: 'New', // Since we already checked for duplicates
+      emailDomain: emailValidation.domain || email.split('@')[1],
+      emailValidationMethod: emailValidation.validationMethod || 'BASIC',
+      emailVerified: emailValidation.valid ? 'Yes' : 'No',
+      phoneVerified: phoneValidation.valid ? 'Yes' : 'No'
+    };
+
+    // Run email sending, Redis storage, and Google Sheets operations in parallel
+    const [emailSent, , sheetAdded] = await Promise.all([
+      // Send email
+      sendEmail(formData),
+      
+      // Store email and phone in Redis to prevent duplicates (run in parallel)
+      Promise.all([
+        storeEmail(email, submissionDate),
+        redisClient.setex(`phone:${phone}`, 86400, 'submitted') // 24 hours
+      ]),
+      
+      // Add lead to Google Sheets with score
+      appendLeadToSheet(formData)
+    ]);
+
+    // Log email sending result
+    if (!emailSent) {
+      console.error('Failed to send email for lead:', leadId);
+    }
+
+    // Sort leads by score after adding new lead (only if sheet was updated)
+    if (sheetAdded) {
+      await sortLeadsByScore(SPREADSHEET_ID);
+    }
+
+    console.log(`Lead ${leadId} processed successfully in background`);
+
+  } catch (error) {
+    console.error('Error processing lead in background:', error);
+  }
+}
+
 // Form submission route
 app.post('/submit', [
   body('first_name').notEmpty().withMessage('First name is required'),
@@ -1081,8 +1169,41 @@ app.post('/submit', [
     // Get next serial number (in production, this should be stored in Redis)
     const serialNumber = leadIdCounter;
 
-    // Validate email with Twilio (enhanced validation)
-    const emailValidation = await validateEmailWithTwilio(email);
+    // Run critical validations in parallel for fast response
+    const [
+      emailValidation,
+      phoneValidation,
+      isDuplicate
+    ] = await Promise.all([
+      // Email validation (both Twilio and basic)
+      validateEmailWithTwilio(email).then(async (twilioResult) => {
+        if (!twilioResult.valid) {
+          return twilioResult;
+        }
+        const basicResult = validateEmail(email);
+        if (!basicResult.valid) {
+          return basicResult;
+        }
+        return twilioResult;
+      }),
+      
+      // Phone validation (both Twilio and basic)
+      validatePhoneWithTwilio(phone, country_code).then(async (twilioResult) => {
+        if (!twilioResult.valid) {
+          return twilioResult;
+        }
+        const basicResult = validatePhone(phone);
+        if (!basicResult.valid) {
+          return basicResult;
+        }
+        return twilioResult;
+      }),
+      
+      // Duplicate check
+      checkLeadDuplicate(email, phone)
+    ]);
+
+    // Check validation results - return immediately if invalid
     if (!emailValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -1090,17 +1211,6 @@ app.post('/submit', [
       });
     }
 
-    // Additional basic email validation
-    const basicEmailValidation = validateEmail(email);
-    if (!basicEmailValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        message: basicEmailValidation.message
-      });
-    }
-
-    // Validate phone with Twilio
-    const phoneValidation = await validatePhoneWithTwilio(phone, country_code);
     if (!phoneValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -1108,19 +1218,7 @@ app.post('/submit', [
       });
     }
 
-    // Additional basic phone validation
-    const basicPhoneValidation = validatePhone(phone);
-    if (!basicPhoneValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        message: basicPhoneValidation.message
-      });
-    }
-
-    // Check for duplicate lead (email or phone)
-    const isDuplicate = await checkLeadDuplicate(email, phone);
-    const leadType = isDuplicate ? 'Duplicate' : 'New';
-    
+    // Check for duplicates - return immediately if duplicate
     if (isDuplicate) {
       return res.status(400).json({
         success: false,
@@ -1128,66 +1226,30 @@ app.post('/submit', [
       });
     }
 
-    // Calculate lead score
-    const leadScore = calculateLeadScore({
-      first_name,
-      agency_name,
-      business_email: email,
-      country_code,
-      phone
-    });
-
-    // Get lead score cluster
-    const leadScoreCluster = getLeadScoreCluster(leadScore);
-
-    // Prepare form data with score and validation info
-    const formData = {
-      serialNumber,
-      leadId,
-      first_name,
-      agency_name,
-      email,
-      full_phone: full_phone, // Use Twilio formatted phone
-      submissionDate,
-      istTimestamp,
-      country: phoneValidation.countryCode || country,
-      score: leadScore,
-      leadScoreCluster,
-      leadSource: LEAD_SOURCE,
-      ipAddress: clientInfo.ip,
-      osBrowser,
-      leadType,
-      emailDomain: emailValidation.domain || email.split('@')[1],
-      emailValidationMethod: emailValidation.validationMethod || 'BASIC',
-      emailVerified: emailValidation.valid ? 'Yes' : 'No',
-      phoneVerified: phoneValidation.valid ? 'Yes' : 'No'
-    };
-
-    // Send email
-    const emailSent = await sendEmail(formData);
-    if (!emailSent) {
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to send email. Please try again later.'
-      });
-    }
-
-    // Store email and phone in Redis to prevent duplicates
-    await storeEmail(email, submissionDate);
-    await redisClient.setex(`phone:${phone}`, 86400, 'submitted'); // 24 hours
-
-    // Add lead to Google Sheets with score
-    const sheetAdded = await appendLeadToSheet(formData);
-    if (sheetAdded) {
-      // Sort leads by score after adding new lead
-      await sortLeadsByScore(SPREADSHEET_ID);
-    }
-
-    // Redirect to Calendly
+    // Return success response immediately after critical validations pass
     res.json({
       success: true,
       redirectUrl: 'https://calendly.com/inboxdoctor-sales/inboxdoctor-product-lpdemo-d2c-01',
-      leadScore: leadScore
+      message: 'Form submitted successfully! Redirecting to calendar...'
+    });
+
+    // Continue processing in background (don't await these)
+    processLeadInBackground({
+      first_name,
+      agency_name,
+      email,
+      country_code,
+      phone,
+      full_phone,
+      submissionDate,
+      istTimestamp,
+      country,
+      leadId,
+      serialNumber,
+      clientInfo,
+      osBrowser,
+      emailValidation,
+      phoneValidation
     });
 
   } catch (error) {
