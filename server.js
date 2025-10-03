@@ -86,7 +86,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1AvfzH3UGwHfdcV_kuGv639CVaMaRaPH_anoke8NV7y0';
-const RANGE = 'A:Q'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Score, H: Date, I: Time (IST), J: Country, K: Lead Score Cluster, L: Lead Source, M: IP Address, N: OS & Browser, O: Lead Type, P: Email Verified, Q: Phone Verified
+const RANGE = 'A:S'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Email List Size, H: Monthly Email Spend, I: Score, J: Date, K: Time (IST), L: Country, M: Lead Score Cluster, N: Lead Source, O: IP Address, P: OS & Browser, Q: Lead Type, R: Email Verified, S: Phone Verified
 
 // Initialize Google Sheets API
 let sheets;
@@ -812,7 +812,7 @@ async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
     // Check if sheet has any data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: spreadsheetId,
-      range: 'A1:Q1',
+      range: 'A1:S1',
     });
 
     const existingData = response.data.values;
@@ -820,12 +820,12 @@ async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified']
+        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Monthly Email Spend', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified']
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: spreadsheetId,
-        range: 'A1:Q1',
+        range: 'A1:S1',
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
@@ -855,6 +855,8 @@ async function appendLeadToSheet(leadData) {
         leadData.agency_name, // Agency
         leadData.email, // Email
         leadData.full_phone, // Phone
+        leadData.email_list_size, // Email List Size
+        leadData.monthly_email_spend, // Monthly Email Spend
         leadData.score, // Score
         leadData.submissionDate, // Date
         leadData.istTimestamp, // Time (IST)
@@ -943,15 +945,15 @@ async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
       return true;
     }
     
-    // Sort by score (column G, index 6) in descending order
+    // Sort by score (column I, index 8) in descending order
     const sortedLeads = dataRows.sort((a, b) => {
-      const scoreA = parseInt(a[6]) || 0;
-      const scoreB = parseInt(b[6]) || 0;
+      const scoreA = parseInt(a[8]) || 0;
+      const scoreB = parseInt(b[8]) || 0;
       return scoreB - scoreA;
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Monthly Email Spend', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -994,7 +996,7 @@ async function storeEmail(email, submissionDate) {
 
 // Send email
 async function sendEmail(formData) {
-  const { first_name, agency_name, email, full_phone, submissionDate } = formData;
+  const { first_name, agency_name, email, full_phone, email_list_size, monthly_email_spend, submissionDate } = formData;
   
   const mailOptions = {
     from: 'AKIA57QXAEZ2NLD5F2HU',
@@ -1017,6 +1019,8 @@ Email Domain: ${formData.emailDomain}
 Email Validation Method: ${formData.emailValidationMethod}
 Phone: ${full_phone}
 Phone Verified: ${formData.phoneVerified}
+Email List Size: ${email_list_size}
+Monthly Email Spend: ${monthly_email_spend}
 Country: ${formData.country}
 Lead Score: ${formData.score}/100
 Lead Score Cluster: ${formData.leadScoreCluster}
@@ -1046,6 +1050,8 @@ async function processLeadInBackground(data) {
       country_code,
       phone,
       full_phone,
+      email_list_size,
+      monthly_email_spend,
       submissionDate,
       istTimestamp,
       country,
@@ -1077,6 +1083,8 @@ async function processLeadInBackground(data) {
       agency_name,
       email,
       full_phone: full_phone,
+      email_list_size,
+      monthly_email_spend,
       submissionDate,
       istTimestamp,
       country: phoneValidation.countryCode || country,
@@ -1132,6 +1140,8 @@ app.post('/submit', [
   body('business_email').isEmail().withMessage('Valid email is required'),
   body('country_code').notEmpty().withMessage('Country code is required'),
   body('phone').notEmpty().withMessage('Phone number is required'),
+  body('email_list_size').notEmpty().withMessage('Email list size is required'),
+  body('monthly_email_spend').notEmpty().withMessage('Monthly email spend is required'),
 ], async (req, res) => {
   try {
     // Check validation errors
@@ -1150,6 +1160,8 @@ app.post('/submit', [
       business_email: email,
       country_code,
       phone,
+      email_list_size,
+      monthly_email_spend,
     } = req.body;
 
     const full_phone = `${country_code} ${phone}`;
@@ -1242,6 +1254,8 @@ app.post('/submit', [
       country_code,
       phone,
       full_phone,
+      email_list_size,
+      monthly_email_spend,
       submissionDate,
       istTimestamp,
       country,
@@ -1399,8 +1413,8 @@ app.post('/admin/setup-dropdown', async (req, res) => {
               sheetId: 0, // First sheet
               startRowIndex: 1, // Start from row 2 (skip header)
               endRowIndex: 1000, // Apply to 1000 rows
-              startColumnIndex: 10, // Column K (Lead Score Cluster)
-              endColumnIndex: 11
+              startColumnIndex: 12, // Column M (Lead Score Cluster)
+              endColumnIndex: 13
             },
             rule: {
               condition: {
@@ -1424,8 +1438,8 @@ app.post('/admin/setup-dropdown', async (req, res) => {
               sheetId: 0, // First sheet
               startRowIndex: 1, // Start from row 2 (skip header)
               endRowIndex: 1000, // Apply to 1000 rows
-              startColumnIndex: 14, // Column O (Lead Type)
-              endColumnIndex: 15
+              startColumnIndex: 16, // Column Q (Lead Type)
+              endColumnIndex: 17
             },
             rule: {
               condition: {
