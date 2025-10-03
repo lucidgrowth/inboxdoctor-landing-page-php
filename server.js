@@ -1,3 +1,14 @@
+/**
+ * InboxDoctor Landing Page Server
+ * 
+ * This server handles form submissions and automatically adds lead data to multiple Google Sheets:
+ * 1. "Sheet1" - Main sheet (gid=0) - the default sheet
+ * 2. "LP - B2C Ecom/D2C Leads - USA" - USA D2C leads subsheet
+ * 
+ * All form submissions are processed in parallel and added to both sheets simultaneously.
+ * The system includes lead scoring, validation, and automatic sorting by score.
+ */
+
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const Redis = require('ioredis');
@@ -85,8 +96,27 @@ const fakePhoneNumbers = [
 ];
 
 // Google Sheets configuration
-const SPREADSHEET_ID = '1AvfzH3UGwHfdcV_kuGv639CVaMaRaPH_anoke8NV7y0';
+const SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
 const RANGE = 'A:S'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Email List Size, H: Marketing Budget, I: Score, J: Date, K: Time (IST), L: Country, M: Lead Score Cluster, N: Lead Source, O: IP Address, P: OS & Browser, Q: Lead Type, R: Email Verified, S: Phone Verified
+
+// Subsheet names
+// The system now supports multiple subsheets within the same Google Spreadsheet
+// All form submissions will be added to both subsheets automatically
+const SUBHEETS = {
+  MAIN: 'Sheet1',  // Main sheet (gid=0) - no need to specify in range
+  USA_D2C: 'LP - B2C Ecom/D2C Leads - USA'
+};
+
+// Helper function to properly escape sheet names for Google Sheets API
+function escapeSheetName(sheetName) {
+  // For the main sheet (Sheet1), we don't need to specify it in the range
+  if (sheetName === 'Sheet1') {
+    return '';
+  }
+  // For other sheet names with special characters, we need to escape single quotes by doubling them
+  // and wrap the entire name in single quotes
+  return `'${sheetName.replace(/'/g, "''")}'`;
+}
 
 // Initialize Google Sheets API
 let sheets;
@@ -802,7 +832,7 @@ function calculateLeadScore(formData) {
 }
 
 // Google Sheets functions
-async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
+async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID, subsheetName = SUBHEETS.MAIN) {
   try {
     if (!sheets) {
       console.error('Google Sheets not initialized');
@@ -810,9 +840,10 @@ async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
     }
 
     // Check if sheet has any data
+    const range = escapeSheetName(subsheetName) ? `${escapeSheetName(subsheetName)}!A1:S1` : 'A1:S1';
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: spreadsheetId,
-      range: 'A1:S1',
+      range: range,
     });
 
     const existingData = response.data.values;
@@ -823,24 +854,25 @@ async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
         ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Marketing Budget', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified']
       ];
 
+      const updateRange = escapeSheetName(subsheetName) ? `${escapeSheetName(subsheetName)}!A1:S1` : 'A1:S1';
       await sheets.spreadsheets.values.update({
         spreadsheetId: spreadsheetId,
-        range: 'A1:S1',
+        range: updateRange,
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
 
-      console.log(`Header row added to Google Sheets: ${spreadsheetId}`);
+      console.log(`Header row added to Google Sheets subsheet: ${subsheetName}`);
     }
 
     return true;
   } catch (error) {
-    console.error(`Error ensuring header row for ${spreadsheetId}:`, error);
+    console.error(`Error ensuring header row for ${spreadsheetId} subsheet ${subsheetName}:`, error);
     return false;
   }
 }
 
-async function appendLeadToSheet(leadData) {
+async function appendLeadToSheet(leadData, subsheetName = SUBHEETS.MAIN) {
   try {
     if (!sheets) {
       console.error('Google Sheets not initialized');
@@ -871,24 +903,25 @@ async function appendLeadToSheet(leadData) {
       ]
     ];
 
-    console.log('Adding lead to Google Sheets:', values[0]);
+    console.log(`Adding lead to Google Sheets subsheet: ${subsheetName}`, values[0]);
 
     // Ensure header row exists
-    await ensureHeaderRow(SPREADSHEET_ID);
+    await ensureHeaderRow(SPREADSHEET_ID, subsheetName);
 
     // Append to sheet
+    const appendRange = escapeSheetName(subsheetName) ? `${escapeSheetName(subsheetName)}!${RANGE}` : RANGE;
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: RANGE,
+      range: appendRange,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       resource: { values }
     });
 
-    console.log('Lead added to Google Sheet successfully');
+    console.log(`Lead added to Google Sheet subsheet ${subsheetName} successfully`);
     return true;
   } catch (error) {
-    console.error('Error adding lead to Google Sheets:', error);
+    console.error(`Error adding lead to Google Sheets subsheet ${subsheetName}:`, error);
     
     // Check if it's an authentication error
     if (error.message && error.message.includes('DECODER routines')) {
@@ -900,16 +933,17 @@ async function appendLeadToSheet(leadData) {
   }
 }
 
-async function getAllLeadsFromSheet(spreadsheetId = SPREADSHEET_ID) {
+async function getAllLeadsFromSheet(spreadsheetId = SPREADSHEET_ID, subsheetName = SUBHEETS.MAIN) {
   try {
     if (!sheets) {
       console.error('Google Sheets not initialized');
       return [];
     }
 
+    const getRange = escapeSheetName(subsheetName) ? `${escapeSheetName(subsheetName)}!${RANGE}` : RANGE;
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: spreadsheetId,
-      range: RANGE,
+      range: getRange,
     });
 
     const data = response.data.values || [];
@@ -921,18 +955,18 @@ async function getAllLeadsFromSheet(spreadsheetId = SPREADSHEET_ID) {
     
     return data;
   } catch (error) {
-    console.error(`Error fetching leads from Google Sheets ${spreadsheetId}:`, error);
+    console.error(`Error fetching leads from Google Sheets ${spreadsheetId} subsheet ${subsheetName}:`, error);
     return [];
   }
 }
 
-async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
+async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID, subsheetName = SUBHEETS.MAIN) {
   try {
-    const leads = await getAllLeadsFromSheet(spreadsheetId);
+    const leads = await getAllLeadsFromSheet(spreadsheetId, subsheetName);
     
     // If no leads to sort, return true
     if (leads.length === 0) {
-      console.log(`No leads to sort in sheet ${spreadsheetId}`);
+      console.log(`No leads to sort in sheet ${spreadsheetId} subsheet ${subsheetName}`);
       return true;
     }
     
@@ -941,7 +975,7 @@ async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
     
     // If no data rows, return true
     if (dataRows.length === 0) {
-      console.log(`No data rows to sort in sheet ${spreadsheetId}`);
+      console.log(`No data rows to sort in sheet ${spreadsheetId} subsheet ${subsheetName}`);
       return true;
     }
     
@@ -957,17 +991,18 @@ async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
+    const updateRange = escapeSheetName(subsheetName) ? `${escapeSheetName(subsheetName)}!${RANGE}` : RANGE;
     await sheets.spreadsheets.values.update({
       spreadsheetId: spreadsheetId,
-      range: RANGE,
+      range: updateRange,
       valueInputOption: 'RAW',
       resource: { values: sortedData }
     });
     
-    console.log(`Leads sorted by score in sheet ${spreadsheetId}`);
+    console.log(`Leads sorted by score in sheet ${spreadsheetId} subsheet ${subsheetName}`);
     return true;
   } catch (error) {
-    console.error(`Error sorting leads in sheet ${spreadsheetId}:`, error);
+    console.error(`Error sorting leads in sheet ${spreadsheetId} subsheet ${subsheetName}:`, error);
     return false;
   }
 }
@@ -1101,7 +1136,7 @@ async function processLeadInBackground(data) {
     };
 
     // Run email sending, Redis storage, and Google Sheets operations in parallel
-    const [emailSent, , sheetAdded] = await Promise.all([
+    const [emailSent, , mainSheetAdded, usaSheetAdded] = await Promise.all([
       // Send email
       sendEmail(formData),
       
@@ -1111,8 +1146,11 @@ async function processLeadInBackground(data) {
         redisClient.setex(`phone:${phone}`, 86400, 'submitted') // 24 hours
       ]),
       
-      // Add lead to Google Sheets with score
-      appendLeadToSheet(formData)
+      // Add lead to main Google Sheets subsheet
+      appendLeadToSheet(formData, SUBHEETS.MAIN),
+      
+      // Add lead to USA D2C Google Sheets subsheet
+      appendLeadToSheet(formData, SUBHEETS.USA_D2C)
     ]);
 
     // Log email sending result
@@ -1120,10 +1158,13 @@ async function processLeadInBackground(data) {
       console.error('Failed to send email for lead:', leadId);
     }
 
-    // Sort leads by score after adding new lead (only if sheet was updated)
-    if (sheetAdded) {
-      // Run sorting operations in parallel for both sheets (after adding is complete)
-      await sortLeadsByScore(SPREADSHEET_ID);
+    // Sort leads by score after adding new lead (only if sheets were updated)
+    if (mainSheetAdded || usaSheetAdded) {
+      // Run sorting operations in parallel for both subsheets (after adding is complete)
+      await Promise.all([
+        mainSheetAdded ? sortLeadsByScore(SPREADSHEET_ID, SUBHEETS.MAIN) : Promise.resolve(true),
+        usaSheetAdded ? sortLeadsByScore(SPREADSHEET_ID, SUBHEETS.USA_D2C) : Promise.resolve(true)
+      ]);
     }
 
     console.log(`Lead ${leadId} processed successfully in background`);
@@ -1293,8 +1334,10 @@ initializeGoogleSheets();
 // Admin endpoint to get all leads with scores
 app.get('/admin/leads', async (req, res) => {
   try {
-    const leads = await getAllLeadsFromSheet();
-    res.json({ leads });
+    const { subsheet = 'main' } = req.query;
+    const subsheetName = subsheet === 'usa' ? SUBHEETS.USA_D2C : SUBHEETS.MAIN;
+    const leads = await getAllLeadsFromSheet(SPREADSHEET_ID, subsheetName);
+    res.json({ leads, subsheet: subsheetName });
   } catch (error) {
     console.error('Error fetching leads:', error);
     res.status(500).json({ error: 'Failed to fetch leads' });
@@ -1305,14 +1348,38 @@ app.get('/admin/leads', async (req, res) => {
 // Admin endpoint to sort leads by score
 app.post('/admin/sort-leads', async (req, res) => {
   try {
-    const sorted = await sortLeadsByScore(SPREADSHEET_ID);
+    const { subsheet = 'main' } = req.body;
+    const subsheetName = subsheet === 'usa' ? SUBHEETS.USA_D2C : SUBHEETS.MAIN;
+    const sorted = await sortLeadsByScore(SPREADSHEET_ID, subsheetName);
     res.json({ 
       success: sorted, 
-      message: sorted ? 'Leads sorted successfully' : 'Failed to sort leads',
-      sheet: sorted
+      message: sorted ? `Leads sorted successfully in ${subsheetName}` : 'Failed to sort leads',
+      subsheet: subsheetName
     });
   } catch (error) {
     console.error('Error sorting leads:', error);
+    res.status(500).json({ error: 'Failed to sort leads' });
+  }
+});
+
+// Admin endpoint to sort leads in both subsheets
+app.post('/admin/sort-all-leads', async (req, res) => {
+  try {
+    const [mainSorted, usaSorted] = await Promise.all([
+      sortLeadsByScore(SPREADSHEET_ID, SUBHEETS.MAIN),
+      sortLeadsByScore(SPREADSHEET_ID, SUBHEETS.USA_D2C)
+    ]);
+    
+    res.json({ 
+      success: mainSorted && usaSorted, 
+      message: mainSorted && usaSorted ? 'Leads sorted successfully in both subsheets' : 'Failed to sort leads in some subsheets',
+      results: {
+        main: mainSorted,
+        usa: usaSorted
+      }
+    });
+  } catch (error) {
+    console.error('Error sorting all leads:', error);
     res.status(500).json({ error: 'Failed to sort leads' });
   }
 });
