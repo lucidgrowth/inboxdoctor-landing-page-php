@@ -86,7 +86,7 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1AvfzH3UGwHfdcV_kuGv639CVaMaRaPH_anoke8NV7y0';
-const RANGE = 'A:S'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Email List Size, H: Monthly Email Spend, I: Score, J: Date, K: Time (IST), L: Country, M: Lead Score Cluster, N: Lead Source, O: IP Address, P: OS & Browser, Q: Lead Type, R: Email Verified, S: Phone Verified
+const RANGE = 'A:S'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Email List Size, H: Marketing Budget, I: Score, J: Date, K: Time (IST), L: Country, M: Lead Score Cluster, N: Lead Source, O: IP Address, P: OS & Browser, Q: Lead Type, R: Email Verified, S: Phone Verified
 
 // Initialize Google Sheets API
 let sheets;
@@ -820,7 +820,7 @@ async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
     // If no data exists, add header row
     if (!existingData || existingData.length === 0) {
       const headerValues = [
-        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Monthly Email Spend', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified']
+        ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Marketing Budget', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified']
       ];
 
       await sheets.spreadsheets.values.update({
@@ -856,7 +856,7 @@ async function appendLeadToSheet(leadData) {
         leadData.email, // Email
         leadData.full_phone, // Phone
         leadData.email_list_size, // Email List Size
-        leadData.monthly_email_spend, // Monthly Email Spend
+        leadData.marketing_budget, // Marketing Budget
         leadData.score, // Score
         leadData.submissionDate, // Date
         leadData.istTimestamp, // Time (IST)
@@ -953,7 +953,7 @@ async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
     });
     
     // Prepare data for update (include header + sorted data)
-    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Monthly Email Spend', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Marketing Budget', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
     const sortedData = [headerRow, ...sortedLeads];
     
     // Update the sheet with sorted data
@@ -996,7 +996,7 @@ async function storeEmail(email, submissionDate) {
 
 // Send email
 async function sendEmail(formData) {
-  const { first_name, agency_name, email, full_phone, email_list_size, monthly_email_spend, submissionDate } = formData;
+  const { first_name, agency_name, email, full_phone, email_list_size, marketing_budget, submissionDate } = formData;
   
   const mailOptions = {
     from: 'AKIA57QXAEZ2NLD5F2HU',
@@ -1020,7 +1020,7 @@ Email Validation Method: ${formData.emailValidationMethod}
 Phone: ${full_phone}
 Phone Verified: ${formData.phoneVerified}
 Email List Size: ${email_list_size}
-Monthly Email Spend: ${monthly_email_spend}
+Marketing Budget: ${marketing_budget}
 Country: ${formData.country}
 Lead Score: ${formData.score}/100
 Lead Score Cluster: ${formData.leadScoreCluster}
@@ -1051,7 +1051,7 @@ async function processLeadInBackground(data) {
       phone,
       full_phone,
       email_list_size,
-      monthly_email_spend,
+      marketing_budget,
       submissionDate,
       istTimestamp,
       country,
@@ -1084,7 +1084,7 @@ async function processLeadInBackground(data) {
       email,
       full_phone: full_phone,
       email_list_size,
-      monthly_email_spend,
+      marketing_budget,
       submissionDate,
       istTimestamp,
       country: phoneValidation.countryCode || country,
@@ -1141,7 +1141,7 @@ app.post('/submit', [
   body('country_code').notEmpty().withMessage('Country code is required'),
   body('phone').notEmpty().withMessage('Phone number is required'),
   body('email_list_size').notEmpty().withMessage('Email list size is required'),
-  body('monthly_email_spend').notEmpty().withMessage('Monthly email spend is required'),
+  body('marketing_budget').notEmpty().withMessage('Marketing budget is required'),
 ], async (req, res) => {
   try {
     // Check validation errors
@@ -1161,7 +1161,7 @@ app.post('/submit', [
       country_code,
       phone,
       email_list_size,
-      monthly_email_spend,
+      marketing_budget,
     } = req.body;
 
     const full_phone = `${country_code} ${phone}`;
@@ -1255,7 +1255,7 @@ app.post('/submit', [
       phone,
       full_phone,
       email_list_size,
-      monthly_email_spend,
+      marketing_budget,
       submissionDate,
       istTimestamp,
       country,
