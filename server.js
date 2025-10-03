@@ -178,18 +178,27 @@ const COUNTRY_EXTENSIONS = {
 // Lead source constant
 const LEAD_SOURCE = 'https://ecomind.inboxdoctor.ai/';
 
-// Lead ID counter (in production, this should be stored in Redis or database)
-let leadIdCounter = 1;
+// Function to get next serial number from Redis (persistent across restarts)
+async function getNextSerialNumber() {
+  try {
+    const serialKey = 'lead_serial_counter';
+    const nextSerial = await redisClient.incr(serialKey);
+    return nextSerial;
+  } catch (error) {
+    console.error('Error getting next serial number:', error);
+    // Fallback to timestamp-based counter
+    return Date.now() % 1000000;
+  }
+}
 
 // Function to generate unique Lead ID (Date/Month/Year format)
-function generateLeadId() {
+async function generateLeadId() {
   const now = new Date();
   const day = now.getDate().toString().padStart(2, '0');
   const month = (now.getMonth() + 1).toString().padStart(2, '0');
   const year = now.getFullYear().toString().slice(-2); // Last 2 digits of year
-  const sequence = leadIdCounter.toString().padStart(4, '0');
+  const sequence = (await getNextSerialNumber()).toString().padStart(4, '0');
   
-  leadIdCounter++;
   return `${day}${month}${year}${sequence}`;
 }
 
@@ -337,9 +346,43 @@ async function checkLeadDuplicate(email, phone) {
     const emailExists = await redisClient.exists(`email:${email}`);
     const phoneExists = await redisClient.exists(`phone:${phone}`);
     
-    return emailExists === 1 || phoneExists === 1;
+    // Also check Google Sheets for duplicates as a backup
+    const sheetDuplicates = await checkSheetDuplicates(email, phone);
+    
+    return emailExists === 1 || phoneExists === 1 || sheetDuplicates;
   } catch (error) {
     console.error('Error checking lead duplicate:', error);
+    return false;
+  }
+}
+
+// Function to check for duplicates in Google Sheets
+async function checkSheetDuplicates(email, phone) {
+  try {
+    if (!sheets) {
+      return false;
+    }
+
+    const leads = await getAllLeadsFromSheet();
+    
+    // Skip header row if it exists
+    const dataRows = leads.slice(1);
+    
+    for (const row of dataRows) {
+      if (row.length >= 5) { // Ensure row has enough columns
+        const rowEmail = row[4]; // Email is column E (index 4)
+        const rowPhone = row[5]; // Phone is column F (index 5)
+        
+        if (rowEmail === email || rowPhone === phone) {
+          console.log('Duplicate found in sheet:', { email: rowEmail, phone: rowPhone });
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error checking sheet duplicates:', error);
     return false;
   }
 }
@@ -847,6 +890,19 @@ async function appendLeadToSheet(leadData) {
       return false;
     }
 
+    // Validate lead data before adding
+    if (!leadData.serialNumber || !leadData.leadId || !leadData.first_name || !leadData.email) {
+      console.error('Invalid lead data - missing required fields:', leadData);
+      return false;
+    }
+
+    // Check for duplicates one more time before adding
+    const isDuplicate = await checkSheetDuplicates(leadData.email, leadData.full_phone);
+    if (isDuplicate) {
+      console.log('Duplicate lead detected before adding to sheet:', leadData.email);
+      return false;
+    }
+
     const values = [
       [
         leadData.serialNumber, // S/Num
@@ -1162,12 +1218,12 @@ app.post('/submit', [
     const country = getCountryFromExtension(country_code);
     
     // Generate Lead ID and get client info
-    const leadId = generateLeadId();
+    const leadId = await generateLeadId();
     const clientInfo = getClientInfo(req);
     const osBrowser = `${clientInfo.os} - ${clientInfo.browser}`;
     
-    // Get next serial number (in production, this should be stored in Redis)
-    const serialNumber = leadIdCounter;
+    // Get next serial number from Redis
+    const serialNumber = await getNextSerialNumber();
 
     // Run critical validations in parallel for fast response
     const [
@@ -1299,6 +1355,342 @@ app.post('/admin/sort-leads', async (req, res) => {
   } catch (error) {
     console.error('Error sorting leads:', error);
     res.status(500).json({ error: 'Failed to sort leads' });
+  }
+});
+
+// Function to clean up duplicate and invalid entries in Google Sheets
+async function cleanupSheetData(spreadsheetId = SPREADSHEET_ID) {
+  try {
+    if (!sheets) {
+      console.error('Google Sheets not initialized');
+      return false;
+    }
+
+    const leads = await getAllLeadsFromSheet();
+    
+    if (leads.length <= 1) {
+      console.log('No data to clean up');
+      return true;
+    }
+
+    // Skip header row
+    const dataRows = leads.slice(1);
+    const cleanedRows = [];
+    const seenEmails = new Set();
+    const seenPhones = new Set();
+    const seenLeadIds = new Set();
+
+    for (const row of dataRows) {
+      if (row.length < 5) {
+        console.log('Skipping incomplete row:', row);
+        continue;
+      }
+
+      const leadId = row[1]; // Lead ID is column B (index 1)
+      const email = row[4]; // Email is column E (index 4)
+      const phone = row[5]; // Phone is column F (index 5)
+      const serialNumber = row[0]; // Serial number is column A (index 0)
+
+      // Skip rows with invalid serial numbers (like 'b')
+      if (!serialNumber || isNaN(parseInt(serialNumber)) || serialNumber === 'b') {
+        console.log('Skipping row with invalid serial number:', row);
+        continue;
+      }
+
+      // Skip duplicate leads (by email, phone, or lead ID)
+      if (seenEmails.has(email) || seenPhones.has(phone) || seenLeadIds.has(leadId)) {
+        console.log('Skipping duplicate lead:', { leadId, email, phone });
+        continue;
+      }
+
+      // Add to cleaned data
+      cleanedRows.push(row);
+      seenEmails.add(email);
+      seenPhones.add(phone);
+      seenLeadIds.add(leadId);
+    }
+
+    // Prepare cleaned data with header
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
+    const cleanedData = [headerRow, ...cleanedRows];
+
+    // Update the sheet with cleaned data
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: spreadsheetId,
+      range: RANGE,
+      valueInputOption: 'RAW',
+      resource: { values: cleanedData }
+    });
+
+    console.log(`Sheet cleaned up: ${dataRows.length - cleanedRows.length} duplicate/invalid rows removed`);
+    return true;
+  } catch (error) {
+    console.error('Error cleaning up sheet data:', error);
+    return false;
+  }
+}
+
+// Function to renumber serial numbers in the sheet
+async function renumberSerialNumbers(spreadsheetId = SPREADSHEET_ID) {
+  try {
+    if (!sheets) {
+      console.error('Google Sheets not initialized');
+      return false;
+    }
+
+    const leads = await getAllLeadsFromSheet();
+    
+    if (leads.length <= 1) {
+      console.log('No data to renumber');
+      return true;
+    }
+
+    // Skip header row
+    const dataRows = leads.slice(1);
+    const renumberedRows = dataRows.map((row, index) => {
+      const newRow = [...row];
+      newRow[0] = index + 1; // Update serial number (column A)
+      return newRow;
+    });
+
+    // Prepare renumbered data with header
+    const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
+    const renumberedData = [headerRow, ...renumberedRows];
+
+    // Update the sheet with renumbered data
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: spreadsheetId,
+      range: RANGE,
+      valueInputOption: 'RAW',
+      resource: { values: renumberedData }
+    });
+
+    // Update Redis counter to match the highest serial number
+    if (renumberedRows.length > 0) {
+      const highestSerial = renumberedRows.length;
+      await redisClient.set('lead_serial_counter', highestSerial);
+      console.log(`Serial numbers renumbered. Redis counter set to ${highestSerial}`);
+    }
+
+    console.log(`Serial numbers renumbered for ${renumberedRows.length} rows`);
+    return true;
+  } catch (error) {
+    console.error('Error renumbering serial numbers:', error);
+    return false;
+  }
+}
+
+// Admin endpoint to clean up sheet data
+app.post('/admin/cleanup-sheet', async (req, res) => {
+  try {
+    const cleaned = await cleanupSheetData(SPREADSHEET_ID);
+    if (cleaned) {
+      // Also renumber serial numbers after cleanup
+      await renumberSerialNumbers(SPREADSHEET_ID);
+    }
+    res.json({ 
+      success: cleaned, 
+      message: cleaned ? 'Sheet data cleaned up and renumbered successfully' : 'Failed to clean up sheet data'
+    });
+  } catch (error) {
+    console.error('Error cleaning up sheet:', error);
+    res.status(500).json({ error: 'Failed to clean up sheet data' });
+  }
+});
+
+// Admin endpoint to renumber serial numbers
+app.post('/admin/renumber-serial', async (req, res) => {
+  try {
+    const renumbered = await renumberSerialNumbers(SPREADSHEET_ID);
+    res.json({ 
+      success: renumbered, 
+      message: renumbered ? 'Serial numbers renumbered successfully' : 'Failed to renumber serial numbers'
+    });
+  } catch (error) {
+    console.error('Error renumbering serial numbers:', error);
+    res.status(500).json({ error: 'Failed to renumber serial numbers' });
+  }
+});
+
+// Function to completely rebuild the sheet with correct data structure
+async function rebuildSheetWithCorrectData(spreadsheetId = SPREADSHEET_ID) {
+  try {
+    if (!sheets) {
+      console.error('Google Sheets not initialized');
+      return false;
+    }
+
+    console.log('Starting sheet rebuild...');
+    
+    // Get all current data
+    const leads = await getAllLeadsFromSheet();
+    
+    if (leads.length <= 1) {
+      console.log('No data to rebuild');
+      return true;
+    }
+
+    // Skip header row
+    const dataRows = leads.slice(1);
+    const validLeads = [];
+    const seenEmails = new Set();
+    const seenPhones = new Set();
+    const seenLeadIds = new Set();
+
+    console.log(`Processing ${dataRows.length} rows...`);
+
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i];
+      console.log(`Processing row ${i + 1}:`, row);
+
+      // Skip empty or invalid rows
+      if (!row || row.length < 5) {
+        console.log(`Skipping incomplete row ${i + 1}`);
+        continue;
+      }
+
+      // Try to extract valid data from the misaligned row
+      let leadData = null;
+
+      // Look for patterns to identify the correct data
+      for (let j = 0; j < row.length; j++) {
+        const cell = row[j];
+        if (!cell) continue;
+
+        // Look for email pattern
+        if (cell.includes('@') && cell.includes('.')) {
+          const email = cell;
+          const emailIndex = j;
+          
+          // Try to find the corresponding data around this email
+          const name = row[emailIndex - 1] || '';
+          const agency = row[emailIndex - 2] || '';
+          const leadId = row[emailIndex - 3] || '';
+          const phone = row[emailIndex + 1] || '';
+          const score = row[emailIndex + 2] || '';
+          const date = row[emailIndex + 3] || '';
+          const time = row[emailIndex + 4] || '';
+          const country = row[emailIndex + 5] || '';
+          const cluster = row[emailIndex + 6] || '';
+          const source = row[emailIndex + 7] || '';
+          const ip = row[emailIndex + 8] || '';
+          const os = row[emailIndex + 9] || '';
+          const leadType = row[emailIndex + 10] || 'New';
+          const emailVerified = row[emailIndex + 11] || 'Yes';
+          const phoneVerified = row[emailIndex + 12] || 'Yes';
+
+          // Validate the extracted data
+          if (email && email.includes('@') && leadId && leadId.length >= 10) {
+            leadData = {
+              serialNumber: i + 1,
+              leadId: leadId,
+              name: name,
+              agency: agency,
+              email: email,
+              phone: phone,
+              score: parseInt(score) || 0,
+              date: date,
+              time: time,
+              country: country,
+              cluster: cluster,
+              source: source,
+              ip: ip,
+              os: os,
+              leadType: leadType,
+              emailVerified: emailVerified,
+              phoneVerified: phoneVerified
+            };
+            break;
+          }
+        }
+      }
+
+      // If we found valid data, check for duplicates
+      if (leadData) {
+        if (seenEmails.has(leadData.email) || seenPhones.has(leadData.phone) || seenLeadIds.has(leadData.leadId)) {
+          console.log(`Skipping duplicate lead: ${leadData.email}`);
+          continue;
+        }
+
+        validLeads.push(leadData);
+        seenEmails.add(leadData.email);
+        seenPhones.add(leadData.phone);
+        seenLeadIds.add(leadData.leadId);
+        console.log(`Valid lead found: ${leadData.email}`);
+      } else {
+        console.log(`Could not extract valid data from row ${i + 1}`);
+      }
+    }
+
+    console.log(`Found ${validLeads.length} valid leads`);
+
+    // Create the correct header row
+    const headerRow = [
+      'S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Score', 'Date', 
+      'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 
+      'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'
+    ];
+
+    // Create the data rows with correct structure
+    const correctData = validLeads.map((lead, index) => [
+      index + 1, // S/Num
+      lead.leadId, // Lead ID
+      lead.name, // Name
+      lead.agency, // Agency
+      lead.email, // Email
+      lead.phone, // Phone
+      lead.score, // Score
+      lead.date, // Date
+      lead.time, // Time (IST)
+      lead.country, // Country
+      lead.cluster, // Lead Score Cluster
+      lead.source, // Lead Source
+      lead.ip, // IP Address
+      lead.os, // OS & Browser
+      lead.leadType, // Lead Type
+      lead.emailVerified, // Email Verified
+      lead.phoneVerified // Phone Verified
+    ]);
+
+    // Combine header and data
+    const finalData = [headerRow, ...correctData];
+
+    // Clear the entire sheet and write the correct data
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: spreadsheetId,
+      range: 'A:Z'
+    });
+
+    // Write the correct data
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: spreadsheetId,
+      range: 'A1:Q' + finalData.length,
+      valueInputOption: 'RAW',
+      resource: { values: finalData }
+    });
+
+    // Update Redis counter
+    await redisClient.set('lead_serial_counter', validLeads.length);
+
+    console.log(`Sheet rebuilt successfully with ${validLeads.length} valid leads`);
+    return true;
+  } catch (error) {
+    console.error('Error rebuilding sheet:', error);
+    return false;
+  }
+}
+
+// Admin endpoint to rebuild sheet with correct data
+app.post('/admin/rebuild-sheet', async (req, res) => {
+  try {
+    const rebuilt = await rebuildSheetWithCorrectData(SPREADSHEET_ID);
+    res.json({ 
+      success: rebuilt, 
+      message: rebuilt ? 'Sheet rebuilt successfully with correct data structure' : 'Failed to rebuild sheet'
+    });
+  } catch (error) {
+    console.error('Error rebuilding sheet:', error);
+    res.status(500).json({ error: 'Failed to rebuild sheet' });
   }
 });
 
