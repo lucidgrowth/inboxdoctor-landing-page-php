@@ -86,6 +86,8 @@ const fakePhoneNumbers = [
 
 // Google Sheets configuration
 const SPREADSHEET_ID = '1iRr31-HifDlq_zymLxk3562KUusqos6T5QqvMqA8xUE';
+const INDIA_SPREADSHEET_ID = '1fP9qecJoBxZY3jKdAbD4nCMvySHsw2zV8XaVzTx-_sM';
+const INDIA_SHEET_NAME = 'LP - B2C Ecom/D2C Leads - India';
 const RANGE = 'A:S'; // A: S/Num, B: Lead ID, C: Name, D: Agency, E: Email, F: Phone, G: Email List Size, H: Marketing Budget, I: Score, J: Date, K: Time (IST), L: Country, M: Lead Score Cluster, N: Lead Source, O: IP Address, P: OS & Browser, Q: Lead Type, R: Email Verified, S: Phone Verified
 
 // Initialize Google Sheets API
@@ -845,17 +847,20 @@ function calculateLeadScore(formData) {
 }
 
 // Google Sheets functions
-async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
+async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID, sheetName = null) {
   try {
     if (!sheets) {
       console.error('Google Sheets not initialized');
       return false;
     }
 
+    // Determine the range based on whether it's a specific sheet or not
+    const range = sheetName ? `${sheetName}!A1:S1` : 'A1:S1';
+
     // Check if sheet has any data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: spreadsheetId,
-      range: 'A1:S1',
+      range: range,
     });
 
     const existingData = response.data.values;
@@ -868,17 +873,17 @@ async function ensureHeaderRow(spreadsheetId = SPREADSHEET_ID) {
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: spreadsheetId,
-        range: 'A1:S1',
+        range: range,
         valueInputOption: 'RAW',
         resource: { values: headerValues }
       });
 
-      console.log(`Header row added to Google Sheets: ${spreadsheetId}`);
+      console.log(`Header row added to Google Sheets: ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}`);
     }
 
     return true;
   } catch (error) {
-    console.error(`Error ensuring header row for ${spreadsheetId}:`, error);
+    console.error(`Error ensuring header row for ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}:`, error);
     return false;
   }
 }
@@ -956,16 +961,86 @@ async function appendLeadToSheet(leadData) {
   }
 }
 
-async function getAllLeadsFromSheet(spreadsheetId = SPREADSHEET_ID) {
+// Function to append lead to India subsheet
+async function appendLeadToIndiaSheet(leadData) {
+  try {
+    if (!sheets) {
+      console.error('Google Sheets not initialized');
+      return false;
+    }
+
+    // Validate lead data before adding
+    if (!leadData.serialNumber || !leadData.leadId || !leadData.first_name || !leadData.email) {
+      console.error('Invalid lead data - missing required fields:', leadData);
+      return false;
+    }
+
+    const values = [
+      [
+        leadData.serialNumber, // S/Num
+        leadData.leadId, // Lead ID
+        leadData.first_name, // Name
+        leadData.agency_name, // Agency
+        leadData.email, // Email
+        leadData.full_phone, // Phone
+        leadData.email_list_size, // Email List Size
+        leadData.marketing_budget, // Marketing Budget
+        leadData.score, // Score
+        leadData.submissionDate, // Date
+        leadData.istTimestamp, // Time (IST)
+        leadData.country, // Country
+        leadData.leadScoreCluster, // Lead Score Cluster
+        leadData.leadSource, // Lead Source
+        leadData.ipAddress, // IP Address
+        leadData.osBrowser, // OS & Browser
+        leadData.leadType, // Lead Type
+        leadData.emailVerified, // Email Verified
+        leadData.phoneVerified // Phone Verified
+      ]
+    ];
+
+    console.log('Adding lead to India Google Sheets:', values[0]);
+
+    // Ensure header row exists for India sheet
+    await ensureHeaderRow(INDIA_SPREADSHEET_ID, INDIA_SHEET_NAME);
+
+    // Append to India subsheet
+    const response = await sheets.spreadsheets.values.append({
+      spreadsheetId: INDIA_SPREADSHEET_ID,
+      range: `${INDIA_SHEET_NAME}!${RANGE}`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values }
+    });
+
+    console.log('Lead added to India Google Sheet successfully');
+    return true;
+  } catch (error) {
+    console.error('Error adding lead to India Google Sheets:', error);
+    
+    // Check if it's an authentication error
+    if (error.message && error.message.includes('DECODER routines')) {
+      console.error('Authentication error: Please check your GOOGLE_PRIVATE_KEY format');
+      console.error('The private key should be properly formatted with newlines');
+    }
+    
+    return false;
+  }
+}
+
+async function getAllLeadsFromSheet(spreadsheetId = SPREADSHEET_ID, sheetName = null) {
   try {
     if (!sheets) {
       console.error('Google Sheets not initialized');
       return [];
     }
 
+    // Determine the range based on whether it's a specific sheet or not
+    const range = sheetName ? `${sheetName}!${RANGE}` : RANGE;
+
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: spreadsheetId,
-      range: RANGE,
+      range: range,
     });
 
     const data = response.data.values || [];
@@ -977,18 +1052,18 @@ async function getAllLeadsFromSheet(spreadsheetId = SPREADSHEET_ID) {
     
     return data;
   } catch (error) {
-    console.error(`Error fetching leads from Google Sheets ${spreadsheetId}:`, error);
+    console.error(`Error fetching leads from Google Sheets ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}:`, error);
     return [];
   }
 }
 
-async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
+async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID, sheetName = null) {
   try {
-    const leads = await getAllLeadsFromSheet(spreadsheetId);
+    const leads = await getAllLeadsFromSheet(spreadsheetId, sheetName);
     
     // If no leads to sort, return true
     if (leads.length === 0) {
-      console.log(`No leads to sort in sheet ${spreadsheetId}`);
+      console.log(`No leads to sort in sheet ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}`);
       return true;
     }
     
@@ -997,7 +1072,7 @@ async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
     
     // If no data rows, return true
     if (dataRows.length === 0) {
-      console.log(`No data rows to sort in sheet ${spreadsheetId}`);
+      console.log(`No data rows to sort in sheet ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}`);
       return true;
     }
     
@@ -1012,18 +1087,21 @@ async function sortLeadsByScore(spreadsheetId = SPREADSHEET_ID) {
     const headerRow = leads[0] || ['S/Num', 'Lead ID', 'Name', 'Agency', 'Email', 'Phone', 'Email List Size', 'Marketing Budget', 'Score', 'Date', 'Time (IST)', 'Country', 'Lead Score Cluster', 'Lead Source', 'IP Address', 'OS & Browser', 'Lead Type', 'Email Verified', 'Phone Verified'];
     const sortedData = [headerRow, ...sortedLeads];
     
+    // Determine the range based on whether it's a specific sheet or not
+    const range = sheetName ? `${sheetName}!${RANGE}` : RANGE;
+    
     // Update the sheet with sorted data
     await sheets.spreadsheets.values.update({
       spreadsheetId: spreadsheetId,
-      range: RANGE,
+      range: range,
       valueInputOption: 'RAW',
       resource: { values: sortedData }
     });
     
-    console.log(`Leads sorted by score in sheet ${spreadsheetId}`);
+    console.log(`Leads sorted by score in sheet ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}`);
     return true;
   } catch (error) {
-    console.error(`Error sorting leads in sheet ${spreadsheetId}:`, error);
+    console.error(`Error sorting leads in sheet ${spreadsheetId}${sheetName ? ` (${sheetName})` : ''}:`, error);
     return false;
   }
 }
@@ -1157,7 +1235,7 @@ async function processLeadInBackground(data) {
     };
 
     // Run email sending, Redis storage, and Google Sheets operations in parallel
-    const [emailSent, , sheetAdded] = await Promise.all([
+    const [emailSent, , sheetAdded, indiaSheetAdded] = await Promise.all([
       // Send email
       sendEmail(formData),
       
@@ -1167,8 +1245,11 @@ async function processLeadInBackground(data) {
         redisClient.setex(`phone:${phone}`, 86400, 'submitted') // 24 hours
       ]),
       
-      // Add lead to Google Sheets with score
-      appendLeadToSheet(formData)
+      // Add lead to main Google Sheets with score
+      appendLeadToSheet(formData),
+      
+      // Add lead to India subsheet
+      appendLeadToIndiaSheet(formData)
     ]);
 
     // Log email sending result
@@ -1179,6 +1260,11 @@ async function processLeadInBackground(data) {
     // Sort leads by score after adding new lead (only if sheet was updated)
     if (sheetAdded) {
       await sortLeadsByScore(SPREADSHEET_ID);
+    }
+
+    // Log India sheet result
+    if (!indiaSheetAdded) {
+      console.error('Failed to add lead to India sheet for lead:', leadId);
     }
 
     console.log(`Lead ${leadId} processed successfully in background`);
@@ -1356,6 +1442,17 @@ app.get('/admin/leads', async (req, res) => {
   }
 });
 
+// Admin endpoint to get all leads from India sheet
+app.get('/admin/leads/india', async (req, res) => {
+  try {
+    const leads = await getAllLeadsFromSheet(INDIA_SPREADSHEET_ID, INDIA_SHEET_NAME);
+    res.json({ leads });
+  } catch (error) {
+    console.error('Error fetching India leads:', error);
+    res.status(500).json({ error: 'Failed to fetch India leads' });
+  }
+});
+
 
 // Admin endpoint to sort leads by score
 app.post('/admin/sort-leads', async (req, res) => {
@@ -1369,6 +1466,21 @@ app.post('/admin/sort-leads', async (req, res) => {
   } catch (error) {
     console.error('Error sorting leads:', error);
     res.status(500).json({ error: 'Failed to sort leads' });
+  }
+});
+
+// Admin endpoint to sort India leads by score
+app.post('/admin/sort-leads/india', async (req, res) => {
+  try {
+    const sorted = await sortLeadsByScore(INDIA_SPREADSHEET_ID, INDIA_SHEET_NAME);
+    res.json({ 
+      success: sorted, 
+      message: sorted ? 'India leads sorted successfully' : 'Failed to sort India leads',
+      sheet: sorted
+    });
+  } catch (error) {
+    console.error('Error sorting India leads:', error);
+    res.status(500).json({ error: 'Failed to sort India leads' });
   }
 });
 
